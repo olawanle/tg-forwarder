@@ -416,6 +416,7 @@ class TelegramService:
         finally:
             await client.disconnect()
 
+    async def broadcast(
         self,
         message: str,
         target_ids: list[str],
@@ -440,7 +441,11 @@ class TelegramService:
                 name = name_lookup.get(target_id, target_id)
                 results.append(
                     await self._send_one(
-                        client, target_id, name, message, max_slowmode_wait
+                        client,
+                        target_id,
+                        name,
+                        message,
+                        max_slowmode_wait,
                     )
                 )
                 if index < len(selected) - 1 and delay_seconds > 0:
