@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import time
 from pathlib import Path
 
 # Ensure repo root is importable when launched via `streamlit run forwarder/app.py`
@@ -14,7 +15,7 @@ import streamlit as st
 from forwarder.config import get_settings
 from forwarder.discord_service import DiscordService
 from forwarder.storage import Storage
-from forwarder.telegram_service import TelegramService
+from forwarder.telegram_service import SendResult, TelegramService
 
 
 def _run(coro):
@@ -243,7 +244,8 @@ def page_compose(settings, tg: TelegramService, dc: DiscordService, store: Stora
     st.info(
         "Telegram: **Broadcast once** sends to every group on the account, then stops "
         "until you press Broadcast again. Stars-gated groups are skipped. Groups that "
-        "wipe your post are blacklisted. Slowmode waits up to 30 minutes per group."
+        "wipe your post are blacklisted. Slowmode waits up to your max below — longer "
+        "waits are skipped for this run only."
     )
     st.write(
         f"Blacklisted Telegram groups: **{len(skips)}** · "
@@ -265,10 +267,10 @@ def page_compose(settings, tg: TelegramService, dc: DiscordService, store: Stora
     )
     max_slowmode = st.slider(
         "Max wait for group slowmode / FloodWait (seconds)",
-        min_value=60,
+        min_value=30,
         max_value=1800,
-        value=1200,
-        step=60,
+        value=300,
+        step=30,
         help="If a group requires a longer wait than this, it is skipped for this run only.",
     )
     include_discord = st.checkbox(
@@ -286,31 +288,66 @@ def page_compose(settings, tg: TelegramService, dc: DiscordService, store: Stora
         disabled=not message.strip() or not tg.has_session(),
     ):
         store.set_draft_message(message)
-        progress = st.progress(0.0, text="Starting Telegram broadcast…")
+        progress = st.progress(0.0, text="Loading Telegram groups…")
         status_box = st.empty()
-        all_results = []
-
-        def on_progress(done: int, total: int, name: str) -> None:
-            if total <= 0:
-                return
-            progress.progress(min(done / total, 1.0), text=f"Telegram ({done}/{total}): {name}")
-            status_box.caption(f"Working on: {name}")
+        live_log = st.empty()
+        all_results: list[tuple[str, object]] = []
+        rows: list[dict] = []
 
         try:
-            results = _run(
-                tg.broadcast_all_groups(
-                    message,
-                    delay_seconds=delay,
-                    skip_ids=set(skips.keys()),
-                    max_slowmode_wait=int(max_slowmode),
-                    progress_cb=on_progress,
+            status_box.info("Fetching every group on the account…")
+            targets = _run(tg.list_groups(skip_ids=set(skips.keys())))
+            # Pre-skip stars known at list time
+            pending = []
+            for t in targets:
+                if t.stars_required > 0:
+                    from forwarder.telegram_service import SendResult
+
+                    r = SendResult(
+                        t.id,
+                        t.name,
+                        "skipped_stars",
+                        f"requires {t.stars_required} Stars — auto-skipped",
+                    )
+                    store.add_send_log("telegram", r.target_id, r.target_name, r.status, r.detail)
+                    store.add_telegram_skip(r.target_id, r.target_name, "stars_required", r.detail)
+                    all_results.append(("telegram", r))
+                    rows.append(
+                        {
+                            "platform": "telegram",
+                            "target": r.target_name,
+                            "status": r.status,
+                            "detail": r.detail,
+                        }
+                    )
+                else:
+                    pending.append(t)
+
+            total = len(pending)
+            status_box.info(f"Sending to {total} groups (blacklist already excluded)…")
+            if total == 0:
+                progress.progress(1.0, text="No groups to send to")
+            for index, target in enumerate(pending):
+                progress.progress(
+                    index / max(total, 1),
+                    text=f"Telegram ({index + 1}/{total}): {target.name}",
                 )
-            )
-            for r in results:
+                status_box.write(
+                    f"**Now sending:** `{target.name}`  \n"
+                    f"Progress: {index}/{total} done · delay {delay:.0f}s between groups"
+                )
+                r = _run(
+                    tg.send_to_group(
+                        message,
+                        target.id,
+                        target.name,
+                        max_slowmode_wait=int(max_slowmode),
+                        verify_seconds=1.5,
+                    )
+                )
                 store.add_send_log(
                     "telegram", r.target_id, r.target_name, r.status, r.detail
                 )
-                # Persist permanent skips
                 if r.status == "auto_deleted":
                     store.add_telegram_skip(
                         r.target_id, r.target_name, "auto_deleted", r.detail
@@ -319,11 +356,32 @@ def page_compose(settings, tg: TelegramService, dc: DiscordService, store: Stora
                     store.add_telegram_skip(
                         r.target_id, r.target_name, "stars_required", r.detail
                     )
-                elif r.status in {"skipped_forbidden", "skipped_banned", "skipped_private"}:
+                elif r.status in {
+                    "skipped_forbidden",
+                    "skipped_banned",
+                    "skipped_private",
+                }:
                     store.add_telegram_skip(
                         r.target_id, r.target_name, r.status, r.detail
                     )
                 all_results.append(("telegram", r))
+                rows.append(
+                    {
+                        "platform": "telegram",
+                        "target": r.target_name,
+                        "status": r.status,
+                        "detail": r.detail,
+                    }
+                )
+                live_log.dataframe(rows, use_container_width=True, height=260)
+
+                if index < total - 1 and delay > 0:
+                    status_box.caption(f"Waiting {delay:.0f}s before next group…")
+                    import time
+
+                    time.sleep(delay)
+
+            progress.progress(1.0, text="Telegram done")
         except Exception as exc:
             st.error(f"Telegram broadcast failed: {exc}")
 
@@ -348,33 +406,32 @@ def page_compose(settings, tg: TelegramService, dc: DiscordService, store: Stora
                         "discord", r.target_id, r.target_name, r.status, r.detail
                     )
                     all_results.append(("discord", r))
+                    rows.append(
+                        {
+                            "platform": "discord",
+                            "target": r.target_name,
+                            "status": r.status,
+                            "detail": r.detail,
+                        }
+                    )
+                    live_log.dataframe(rows, use_container_width=True, height=260)
             except Exception as exc:
                 st.error(f"Discord broadcast failed: {exc}")
 
         progress.progress(1.0, text="Done — broadcast finished until you run it again")
+        status_box.success("Broadcast finished. Press the button again only when you want another run.")
         ok = sum(1 for _, r in all_results if r.status == "ok")
         deleted = sum(1 for _, r in all_results if r.status == "auto_deleted")
         stars = sum(1 for _, r in all_results if r.status == "skipped_stars")
         other_skip = sum(
             1
             for _, r in all_results
-            if r.status.startswith("skipped") and r.status != "skipped_stars"
+            if str(getattr(r, "status", "")).startswith("skipped")
+            and r.status != "skipped_stars"
         )
         st.success(
             f"Finished this run: {ok} sent · {deleted} auto-deleted (blacklisted) · "
             f"{stars} stars-gated · {other_skip} other skips · {len(all_results)} total"
-        )
-        st.dataframe(
-            [
-                {
-                    "platform": platform,
-                    "target": r.target_name,
-                    "status": r.status,
-                    "detail": r.detail,
-                }
-                for platform, r in all_results
-            ],
-            use_container_width=True,
         )
 
 

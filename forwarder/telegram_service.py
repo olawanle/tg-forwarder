@@ -177,10 +177,11 @@ class TelegramService:
         name: str,
         message: str,
         max_slowmode_wait: int,
+        verify_seconds: float = 1.5,
     ) -> SendResult:
         peer = int(target_id)
         try:
-            entity = await client.get_entity(peer)
+            entity = await asyncio.wait_for(client.get_entity(peer), timeout=30)
         except Exception as exc:
             return SendResult(target_id, name, "skipped", f"cannot resolve peer: {exc}"[:280])
 
@@ -194,7 +195,7 @@ class TelegramService:
             )
 
         async def do_send():
-            return await client.send_message(entity, message)
+            return await asyncio.wait_for(client.send_message(entity, message), timeout=60)
 
         async def verify_kept(msg) -> bool:
             """Return False if the group wiped the message shortly after send."""
@@ -203,19 +204,19 @@ class TelegramService:
             msg_id = getattr(msg, "id", None)
             if not msg_id:
                 return True
-            await asyncio.sleep(2.0)
+            await asyncio.sleep(verify_seconds)
             try:
-                fetched = await client.get_messages(entity, ids=msg_id)
+                fetched = await asyncio.wait_for(
+                    client.get_messages(entity, ids=msg_id), timeout=30
+                )
                 if fetched is None or isinstance(fetched, MessageEmpty):
                     return False
-                # Telethon may return a list for some calls
                 if isinstance(fetched, list):
                     if not fetched or all(
                         x is None or isinstance(x, MessageEmpty) for x in fetched
                     ):
                         return False
             except Exception:
-                # If we can't verify, trust the original send result
                 return True
             return True
 
@@ -388,8 +389,33 @@ class TelegramService:
         targets.sort(key=lambda t: t.name.lower())
         return targets
 
-    # Kept for Discord-style selective sends / compatibility
-    async def broadcast(
+    async def send_to_group(
+        self,
+        message: str,
+        target_id: str,
+        name: str,
+        max_slowmode_wait: int = 300,
+        verify_seconds: float = 1.5,
+    ) -> SendResult:
+        """Connect, send to one group, disconnect. Used for live Streamlit progress."""
+        if not message.strip():
+            raise ValueError("Message is empty")
+        client = self._client()
+        try:
+            await client.connect()
+            if not await client.is_user_authorized():
+                raise RuntimeError("Telegram session is not authorized")
+            return await self._send_one(
+                client,
+                target_id,
+                name,
+                message,
+                max_slowmode_wait=max_slowmode_wait,
+                verify_seconds=verify_seconds,
+            )
+        finally:
+            await client.disconnect()
+
         self,
         message: str,
         target_ids: list[str],
