@@ -56,18 +56,28 @@ Paste the printed value into `TELEGRAM_SESSION`.
 
 ## Railway deploy
 
-1. Push this repo (or only the forwarder files) to GitHub.
+The live deployment is already provisioned:
+
+| Item | Value |
+|------|-------|
+| Project | `tg-forwarder` |
+| Service | `forwarder` (auto-deploys from `olawanle/tg-forwarder`, branch `main`) |
+| URL | https://forwarder-production-bc52.up.railway.app |
+| Build | Docker, [`Dockerfile.forwarder`](Dockerfile.forwarder) via `RAILWAY_DOCKERFILE_PATH` |
+| Volume | `/data` (persists the SQLite database) |
+
+Build note: the repo root also holds the legacy campaign-manager `pyproject.toml`, which Nixpacks picks up instead of Streamlit. [`Dockerfile.forwarder`](Dockerfile.forwarder) installs only `requirements-forwarder.txt`, so the build must stay on the Docker builder.
+
+Free plan: `sleepApplication` is required, so the service sleeps while idle and wakes on the first request. Broadcasts are triggered from the UI, so this is fine — just allow a few seconds for the first page load. Free-tier deploys are also blocked during each region's peak hours (8:00–20:00 local), so redeploys may need an off-peak region.
+
+To reproduce from scratch:
+
+1. Push the repo to GitHub.
 2. New Railway project → Deploy from repo.
-3. Set the start command (already in [`Procfile`](Procfile) / [`railway.toml`](railway.toml)):
-
-   `streamlit run forwarder/app.py --server.port=$PORT --server.address=0.0.0.0 --server.headless=true`
-
-4. Install deps: set Railway to use `requirements-forwarder.txt`, **or** add a root `requirements.txt` that points at it / duplicates those packages.
-5. Add env vars from the table above (`TELEGRAM_*`, `DISCORD_BOT_TOKEN`, optional `OWNER_PASSWORD`).
-6. Attach a **volume** mounted at `/data` and set `FORWARDER_DATA_DIR=/data` so SQLite survives restarts.
-7. Open the public URL → Connect → Targets → Compose → Broadcast.
-
-Nixpacks tip: set variable `NIXPACKS_PYTHON_PKG_MANAGER=pip` if needed, and ensure build installs from `requirements-forwarder.txt` (Railway → Settings → Build → customize, or rename/copy to `requirements.txt` for the deploy).
+3. Set variable `RAILWAY_DOCKERFILE_PATH=Dockerfile.forwarder` and use the Docker builder.
+4. Add env vars from the table above (`TELEGRAM_*`, `DISCORD_BOT_TOKEN`, optional `OWNER_PASSWORD`).
+5. Attach a volume mounted at `/data` and set `FORWARDER_DATA_DIR=/data`.
+6. Generate a domain, then open it → Connect → Targets → Compose → Broadcast.
 
 ## App pages
 
