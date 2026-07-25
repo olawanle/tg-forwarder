@@ -1,0 +1,3 @@
+# Install these for the Streamlit Group Forwarder (Railway / local).
+# Prefer: pip install -r requirements-forwarder.txt
+-r requirements-forwarder.txt
