@@ -14,8 +14,9 @@ import streamlit as st
 
 from forwarder.config import get_settings
 from forwarder.discord_service import DiscordService
-from forwarder.storage import Storage
-from forwarder.telegram_service import SendResult, TelegramService
+from forwarder.job_runner import get_job_runner
+from forwarder.storage import JobRow, Storage
+from forwarder.telegram_service import TelegramService
 
 
 def _run(coro):
@@ -237,20 +238,126 @@ def page_targets(settings, tg: TelegramService, dc: DiscordService, store: Stora
             st.success(f"Saved {len(picked_dc)} Discord channel(s).")
 
 
+def _render_job_panel(store: Storage, job: JobRow, runner) -> None:
+    total = max(job.total, 1)
+    frac = min(job.done / total, 1.0) if job.total else 0.0
+    if job.status in {"completed", "failed", "cancelled"}:
+        frac = 1.0
+
+    st.progress(
+        frac,
+        text=f"Job #{job.id} · {job.status} · {job.done}/{job.total or '?'} · {job.current_name or '—'}",
+    )
+    st.caption(job.current_detail or "")
+    if job.error:
+        st.error(job.error)
+
+    if job.status in {"queued", "running", "interrupted"}:
+        cols = st.columns(2)
+        if cols[0].button("Cancel broadcast", key=f"cancel_{job.id}"):
+            runner.request_cancel()
+            store.update_job(job.id, current_detail="Cancel requested…")
+            st.warning("Cancel requested — finishes the current group, then stops.")
+        if job.status == "interrupted" and cols[1].button(
+            "Resume now", key=f"resume_{job.id}"
+        ):
+            settings = get_settings()
+            session = st.session_state.get("telegram_session") or settings.telegram_session
+            try:
+                runner.resume_interrupted(store, session)
+                st.success("Resume started")
+                st.rerun()
+            except Exception as exc:
+                st.error(str(exc))
+
+    if job.summary:
+        st.write(
+            f"Summary: **{job.summary.get('ok', 0)}** sent · "
+            f"**{job.summary.get('auto_deleted', 0)}** auto-deleted · "
+            f"**{job.summary.get('skipped_stars', 0)}** stars · "
+            f"**{job.summary.get('other_skips', 0)}** other skips · "
+            f"**{job.summary.get('errors', 0)}** errors"
+        )
+
+    results = store.list_job_results(job.id)
+    if results:
+        st.dataframe(
+            [
+                {
+                    "platform": r.platform,
+                    "target": r.target_name,
+                    "status": r.status,
+                    "detail": r.detail,
+                }
+                for r in results[-200:]
+            ],
+            use_container_width=True,
+            height=320,
+        )
+
+
+def page_progress(store: Storage) -> None:
+    st.header("Broadcast progress")
+    st.caption(
+        "Jobs run in the background on the server. You can switch pages, reload, "
+        "or open this URL on another device — progress is shared from the database."
+    )
+    runner = get_job_runner()
+    job = store.get_active_job() or store.get_latest_job()
+    if not job:
+        st.info("No broadcast jobs yet. Start one from Compose.")
+        return
+
+    _render_job_panel(store, job, runner)
+
+    if job.status in {"queued", "running"}:
+        st.caption("Auto-refreshing every 2 seconds…")
+        time.sleep(2)
+        st.rerun()
+
+
 def page_compose(settings, tg: TelegramService, dc: DiscordService, store: Storage) -> None:
     st.header("Compose & broadcast")
+    runner = get_job_runner()
     skips = store.get_telegram_skips()
     selected = store.get_selected_targets()
+    active = store.get_active_job()
+
     st.info(
-        "Telegram: **Broadcast once** sends to every group on the account, then stops "
-        "until you press Broadcast again. Stars-gated groups are skipped. Groups that "
-        "wipe your post are blacklisted. Slowmode waits up to your max below — longer "
-        "waits are skipped for this run only."
+        "Broadcast runs as a **background job** on the server. Leaving this page, "
+        "reloading, or opening another device will not stop it — watch Progress."
     )
     st.write(
         f"Blacklisted Telegram groups: **{len(skips)}** · "
         f"Discord channels selected: **{len(selected['discord'])}**"
     )
+
+    if active:
+        st.warning(
+            f"Job #{active.id} is **{active.status}** "
+            f"({active.done}/{active.total or '?'}). "
+            "Start is disabled until it finishes or you cancel it."
+        )
+        _render_job_panel(store, active, runner)
+        if active.status in {"queued", "running"}:
+            time.sleep(2)
+            st.rerun()
+        return
+
+    latest = store.get_latest_job()
+    if latest and latest.status in {"completed", "failed", "cancelled", "interrupted"}:
+        with st.expander(f"Last job #{latest.id} ({latest.status})", expanded=False):
+            _render_job_panel(store, latest, runner)
+            if latest.status == "interrupted":
+                if st.button("Resume interrupted job"):
+                    session = (
+                        st.session_state.get("telegram_session") or settings.telegram_session
+                    )
+                    try:
+                        runner.resume_interrupted(store, session)
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(str(exc))
 
     message = st.text_area(
         "Message",
@@ -282,157 +389,27 @@ def page_compose(settings, tg: TelegramService, dc: DiscordService, store: Stora
         store.set_draft_message(message)
         st.success("Draft saved")
 
+    can_start = bool(message.strip() and tg.has_session())
     if st.button(
-        "Broadcast to all Telegram groups",
+        "Start background broadcast to all Telegram groups",
         type="primary",
-        disabled=not message.strip() or not tg.has_session(),
+        disabled=not can_start,
     ):
         store.set_draft_message(message)
-        progress = st.progress(0.0, text="Loading Telegram groups…")
-        status_box = st.empty()
-        live_log = st.empty()
-        all_results: list[tuple[str, object]] = []
-        rows: list[dict] = []
-
+        session = st.session_state.get("telegram_session") or settings.telegram_session
         try:
-            status_box.info("Fetching every group on the account…")
-            targets = _run(tg.list_groups(skip_ids=set(skips.keys())))
-            # Pre-skip stars known at list time
-            pending = []
-            for t in targets:
-                if t.stars_required > 0:
-                    from forwarder.telegram_service import SendResult
-
-                    r = SendResult(
-                        t.id,
-                        t.name,
-                        "skipped_stars",
-                        f"requires {t.stars_required} Stars — auto-skipped",
-                    )
-                    store.add_send_log("telegram", r.target_id, r.target_name, r.status, r.detail)
-                    store.add_telegram_skip(r.target_id, r.target_name, "stars_required", r.detail)
-                    all_results.append(("telegram", r))
-                    rows.append(
-                        {
-                            "platform": "telegram",
-                            "target": r.target_name,
-                            "status": r.status,
-                            "detail": r.detail,
-                        }
-                    )
-                else:
-                    pending.append(t)
-
-            total = len(pending)
-            status_box.info(f"Sending to {total} groups (blacklist already excluded)…")
-            if total == 0:
-                progress.progress(1.0, text="No groups to send to")
-            for index, target in enumerate(pending):
-                progress.progress(
-                    index / max(total, 1),
-                    text=f"Telegram ({index + 1}/{total}): {target.name}",
-                )
-                status_box.write(
-                    f"**Now sending:** `{target.name}`  \n"
-                    f"Progress: {index}/{total} done · delay {delay:.0f}s between groups"
-                )
-                r = _run(
-                    tg.send_to_group(
-                        message,
-                        target.id,
-                        target.name,
-                        max_slowmode_wait=int(max_slowmode),
-                        verify_seconds=1.5,
-                    )
-                )
-                store.add_send_log(
-                    "telegram", r.target_id, r.target_name, r.status, r.detail
-                )
-                if r.status == "auto_deleted":
-                    store.add_telegram_skip(
-                        r.target_id, r.target_name, "auto_deleted", r.detail
-                    )
-                elif r.status == "skipped_stars":
-                    store.add_telegram_skip(
-                        r.target_id, r.target_name, "stars_required", r.detail
-                    )
-                elif r.status in {
-                    "skipped_forbidden",
-                    "skipped_banned",
-                    "skipped_private",
-                }:
-                    store.add_telegram_skip(
-                        r.target_id, r.target_name, r.status, r.detail
-                    )
-                all_results.append(("telegram", r))
-                rows.append(
-                    {
-                        "platform": "telegram",
-                        "target": r.target_name,
-                        "status": r.status,
-                        "detail": r.detail,
-                    }
-                )
-                live_log.dataframe(rows, use_container_width=True, height=260)
-
-                if index < total - 1 and delay > 0:
-                    status_box.caption(f"Waiting {delay:.0f}s before next group…")
-                    import time
-
-                    time.sleep(delay)
-
-            progress.progress(1.0, text="Telegram done")
+            job_id = runner.start_broadcast(
+                store=store,
+                message=message,
+                delay_seconds=float(delay),
+                max_slowmode_wait=int(max_slowmode),
+                include_discord=bool(include_discord),
+                telegram_session=session,
+            )
+            st.success(f"Started background job #{job_id}. Open Progress anytime.")
+            st.rerun()
         except Exception as exc:
-            st.error(f"Telegram broadcast failed: {exc}")
-
-        if include_discord and selected["discord"]:
-            dc_names = {
-                t["id"]: t.get("raw_name", t["name"])
-                for t in st.session_state.get("dc_targets", [])
-            }
-            progress.progress(0.0, text="Sending Discord…")
-            try:
-                results = _run(
-                    dc.broadcast(
-                        message,
-                        selected["discord"],
-                        delay,
-                        max(len(selected["discord"]), 1),
-                        dc_names,
-                    )
-                )
-                for r in results:
-                    store.add_send_log(
-                        "discord", r.target_id, r.target_name, r.status, r.detail
-                    )
-                    all_results.append(("discord", r))
-                    rows.append(
-                        {
-                            "platform": "discord",
-                            "target": r.target_name,
-                            "status": r.status,
-                            "detail": r.detail,
-                        }
-                    )
-                    live_log.dataframe(rows, use_container_width=True, height=260)
-            except Exception as exc:
-                st.error(f"Discord broadcast failed: {exc}")
-
-        progress.progress(1.0, text="Done — broadcast finished until you run it again")
-        status_box.success("Broadcast finished. Press the button again only when you want another run.")
-        ok = sum(1 for _, r in all_results if r.status == "ok")
-        deleted = sum(1 for _, r in all_results if r.status == "auto_deleted")
-        stars = sum(1 for _, r in all_results if r.status == "skipped_stars")
-        other_skip = sum(
-            1
-            for _, r in all_results
-            if str(getattr(r, "status", "")).startswith("skipped")
-            and r.status != "skipped_stars"
-        )
-        st.success(
-            f"Finished this run: {ok} sent · {deleted} auto-deleted (blacklisted) · "
-            f"{stars} stars-gated · {other_skip} other skips · {len(all_results)} total"
-        )
+            st.error(str(exc))
 
 
 def page_log(store: Storage) -> None:
@@ -459,17 +436,31 @@ def page_log(store: Storage) -> None:
 def main() -> None:
     st.set_page_config(page_title="Group Forwarder", page_icon="📣", layout="wide")
     settings, tg, dc, store = _services()
+    runner = get_job_runner()
+    session = st.session_state.get("telegram_session") or settings.telegram_session
+    runner.ensure_started(store, session)
 
     if not _gate(settings.owner_password):
         return
 
+    active = store.get_active_job()
     st.sidebar.title("Group Forwarder")
-    page = st.sidebar.radio("Page", ["Connect", "Targets", "Compose", "Log"])
+    if active:
+        st.sidebar.success(
+            f"Job #{active.id} {active.status}: {active.done}/{active.total or '?'}"
+        )
+    page = st.sidebar.radio(
+        "Page", ["Connect", "Targets", "Compose", "Progress", "Log"]
+    )
     st.sidebar.caption(
         "Only post in groups/servers where you have permission. "
         "Mass spam can get accounts banned."
     )
     st.sidebar.caption(f"Data: {settings.db_path}")
+    st.sidebar.caption(
+        "Note: Railway free tier sleeps the app when idle — a sleeping "
+        "container pauses jobs until someone opens the site again (then it resumes)."
+    )
 
     if page == "Connect":
         page_connect(settings, tg, dc)
@@ -477,6 +468,8 @@ def main() -> None:
         page_targets(settings, tg, dc, store)
     elif page == "Compose":
         page_compose(settings, tg, dc, store)
+    elif page == "Progress":
+        page_progress(store)
     else:
         page_log(store)
 
