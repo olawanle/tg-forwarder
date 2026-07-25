@@ -129,37 +129,84 @@ def page_connect(settings, tg: TelegramService, dc: DiscordService) -> None:
 
 def page_targets(settings, tg: TelegramService, dc: DiscordService, store: Storage) -> None:
     st.header("Targets")
-    selected = store.get_selected_targets()
+    st.caption(
+        "Telegram: every group/supergroup on the account is messaged on Broadcast "
+        "(DMs and broadcast channels are ignored). Auto-deleted and Stars-gated groups "
+        "are blacklisted and skipped on later runs."
+    )
 
+    skips = store.get_telegram_skips()
     c1, c2 = st.columns(2)
     with c1:
-        st.subheader("Telegram groups")
-        if st.button("Refresh Telegram"):
+        st.subheader("Telegram")
+        if st.button("Preview all Telegram groups"):
             try:
-                with st.spinner("Loading Telegram dialogs..."):
-                    tg_list = _run(tg.list_groups())
+                with st.spinner("Loading groups…"):
+                    tg_list = _run(tg.list_groups(skip_ids=set(skips.keys())))
                 st.session_state["tg_targets"] = [
-                    {"id": t.id, "name": f"{t.name} [{t.kind}]", "raw_name": t.name}
+                    {
+                        "id": t.id,
+                        "name": f"{t.name} [{t.kind}]",
+                        "raw_name": t.name,
+                        "stars": t.stars_required,
+                    }
                     for t in tg_list
                 ]
             except Exception as exc:
                 st.error(str(exc))
         tg_targets = st.session_state.get("tg_targets", [])
         if tg_targets:
-            labels = {t["id"]: t["name"] for t in tg_targets}
-            default = [i for i in selected["telegram"] if i in labels]
-            picked_tg = st.multiselect(
-                "Select Telegram targets",
-                options=list(labels.keys()),
-                default=default,
-                format_func=lambda i: labels.get(i, i),
+            st.write(f"**{len(tg_targets)}** groups will be messaged (excluding blacklist).")
+            st.dataframe(
+                [
+                    {
+                        "name": t["raw_name"],
+                        "kind": t["name"].split("[")[-1].rstrip("]") if "[" in t["name"] else "",
+                        "stars": t.get("stars", 0),
+                    }
+                    for t in tg_targets
+                ],
+                use_container_width=True,
+                height=280,
             )
         else:
-            picked_tg = selected["telegram"]
-            st.info("Click Refresh Telegram to load groups.")
+            st.info("Click Preview to see every group on the account.")
+
+        st.subheader("Blacklisted Telegram groups")
+        if skips:
+            st.dataframe(
+                [
+                    {
+                        "name": v.get("name", k),
+                        "reason": v.get("reason", ""),
+                        "detail": v.get("detail", ""),
+                        "at": v.get("at", ""),
+                    }
+                    for k, v in skips.items()
+                ],
+                use_container_width=True,
+                height=220,
+            )
+            restore_id = st.selectbox(
+                "Restore a group from blacklist",
+                options=[""] + list(skips.keys()),
+                format_func=lambda i: "(pick…)" if not i else skips[i].get("name", i),
+            )
+            cols = st.columns(2)
+            if cols[0].button("Restore selected") and restore_id:
+                store.remove_telegram_skip(restore_id)
+                st.success("Restored — will be included on next broadcast.")
+                st.rerun()
+            if cols[1].button("Clear entire blacklist"):
+                store.clear_telegram_skips()
+                st.success("Blacklist cleared.")
+                st.rerun()
+        else:
+            st.caption("No blacklisted groups yet.")
 
     with c2:
-        st.subheader("Discord channels")
+        st.subheader("Discord channels (optional)")
+        selected = store.get_selected_targets()
         if st.button("Refresh Discord"):
             try:
                 with st.spinner("Loading Discord channels..."):
@@ -184,18 +231,24 @@ def page_targets(settings, tg: TelegramService, dc: DiscordService, store: Stora
             picked_dc = selected["discord"]
             st.info("Click Refresh Discord to load channels the bot can post in.")
 
-    if st.button("Save selection", type="primary"):
-        store.set_selected_targets(picked_tg, picked_dc)
-        st.success(
-            f"Saved {len(picked_tg)} Telegram + {len(picked_dc)} Discord target(s)."
-        )
+        if st.button("Save Discord selection", type="primary"):
+            store.set_selected_targets([], picked_dc)
+            st.success(f"Saved {len(picked_dc)} Discord channel(s).")
 
 
 def page_compose(settings, tg: TelegramService, dc: DiscordService, store: Storage) -> None:
     st.header("Compose & broadcast")
+    skips = store.get_telegram_skips()
     selected = store.get_selected_targets()
-    total = len(selected["telegram"]) + len(selected["discord"])
-    st.write(f"Selected targets: **{total}** (max {settings.max_targets_per_run} per run)")
+    st.info(
+        "Telegram: **Broadcast once** sends to every group on the account, then stops "
+        "until you press Broadcast again. Stars-gated groups are skipped. Groups that "
+        "wipe your post are blacklisted. Slowmode waits up to 30 minutes per group."
+    )
+    st.write(
+        f"Blacklisted Telegram groups: **{len(skips)}** · "
+        f"Discord channels selected: **{len(selected['discord'])}**"
+    )
 
     message = st.text_area(
         "Message",
@@ -206,83 +259,111 @@ def page_compose(settings, tg: TelegramService, dc: DiscordService, store: Stora
     delay = st.slider(
         "Delay between sends (seconds)",
         min_value=3.0,
-        max_value=30.0,
+        max_value=60.0,
         value=float(settings.default_delay_seconds),
         step=1.0,
     )
-    raise_cap = st.checkbox(
-        "Allow more than the default max targets (use carefully)", value=False
+    max_slowmode = st.slider(
+        "Max wait for group slowmode / FloodWait (seconds)",
+        min_value=60,
+        max_value=1800,
+        value=1200,
+        step=60,
+        help="If a group requires a longer wait than this, it is skipped for this run only.",
     )
-    max_targets = (
-        settings.max_targets_per_run
-        if not raise_cap
-        else max(settings.max_targets_per_run, total)
+    include_discord = st.checkbox(
+        "Also send to selected Discord channels after Telegram finishes",
+        value=bool(selected["discord"]),
     )
 
     if st.button("Save draft"):
         store.set_draft_message(message)
         st.success("Draft saved")
 
-    if st.button("Broadcast", type="primary", disabled=not message.strip() or total == 0):
+    if st.button(
+        "Broadcast to all Telegram groups",
+        type="primary",
+        disabled=not message.strip() or not tg.has_session(),
+    ):
         store.set_draft_message(message)
-        tg_names = {
-            t["id"]: t.get("raw_name", t["name"])
-            for t in st.session_state.get("tg_targets", [])
-        }
-        dc_names = {
-            t["id"]: t.get("raw_name", t["name"])
-            for t in st.session_state.get("dc_targets", [])
-        }
-
-        progress = st.progress(0.0, text="Starting…")
+        progress = st.progress(0.0, text="Starting Telegram broadcast…")
+        status_box = st.empty()
         all_results = []
 
-        tg_ids = selected["telegram"][:max_targets]
-        remaining = max_targets - len(tg_ids)
-        dc_ids = selected["discord"][: max(0, remaining)]
+        def on_progress(done: int, total: int, name: str) -> None:
+            if total <= 0:
+                return
+            progress.progress(min(done / total, 1.0), text=f"Telegram ({done}/{total}): {name}")
+            status_box.caption(f"Working on: {name}")
 
-        steps = len(tg_ids) + len(dc_ids) or 1
-        done = 0
-
-        if tg_ids:
-            progress.progress(done / steps, text="Sending Telegram…")
-            try:
-                results = _run(
-                    tg.broadcast(message, tg_ids, delay, max_targets, tg_names)
+        try:
+            results = _run(
+                tg.broadcast_all_groups(
+                    message,
+                    delay_seconds=delay,
+                    skip_ids=set(skips.keys()),
+                    max_slowmode_wait=int(max_slowmode),
+                    progress_cb=on_progress,
                 )
-                for r in results:
-                    store.add_send_log(
-                        "telegram", r.target_id, r.target_name, r.status, r.detail
+            )
+            for r in results:
+                store.add_send_log(
+                    "telegram", r.target_id, r.target_name, r.status, r.detail
+                )
+                # Persist permanent skips
+                if r.status == "auto_deleted":
+                    store.add_telegram_skip(
+                        r.target_id, r.target_name, "auto_deleted", r.detail
                     )
-                    all_results.append(("telegram", r))
-                    done += 1
-                    progress.progress(
-                        min(done / steps, 1.0), text=f"Telegram: {r.target_name}"
+                elif r.status == "skipped_stars":
+                    store.add_telegram_skip(
+                        r.target_id, r.target_name, "stars_required", r.detail
                     )
-            except Exception as exc:
-                st.error(f"Telegram broadcast failed: {exc}")
+                elif r.status in {"skipped_forbidden", "skipped_banned", "skipped_private"}:
+                    store.add_telegram_skip(
+                        r.target_id, r.target_name, r.status, r.detail
+                    )
+                all_results.append(("telegram", r))
+        except Exception as exc:
+            st.error(f"Telegram broadcast failed: {exc}")
 
-        if dc_ids:
-            progress.progress(done / steps, text="Sending Discord…")
+        if include_discord and selected["discord"]:
+            dc_names = {
+                t["id"]: t.get("raw_name", t["name"])
+                for t in st.session_state.get("dc_targets", [])
+            }
+            progress.progress(0.0, text="Sending Discord…")
             try:
                 results = _run(
-                    dc.broadcast(message, dc_ids, delay, max_targets, dc_names)
+                    dc.broadcast(
+                        message,
+                        selected["discord"],
+                        delay,
+                        max(len(selected["discord"]), 1),
+                        dc_names,
+                    )
                 )
                 for r in results:
                     store.add_send_log(
                         "discord", r.target_id, r.target_name, r.status, r.detail
                     )
                     all_results.append(("discord", r))
-                    done += 1
-                    progress.progress(
-                        min(done / steps, 1.0), text=f"Discord: {r.target_name}"
-                    )
             except Exception as exc:
                 st.error(f"Discord broadcast failed: {exc}")
 
-        progress.progress(1.0, text="Done")
+        progress.progress(1.0, text="Done — broadcast finished until you run it again")
         ok = sum(1 for _, r in all_results if r.status == "ok")
-        st.success(f"Finished: {ok}/{len(all_results)} sent successfully")
+        deleted = sum(1 for _, r in all_results if r.status == "auto_deleted")
+        stars = sum(1 for _, r in all_results if r.status == "skipped_stars")
+        other_skip = sum(
+            1
+            for _, r in all_results
+            if r.status.startswith("skipped") and r.status != "skipped_stars"
+        )
+        st.success(
+            f"Finished this run: {ok} sent · {deleted} auto-deleted (blacklisted) · "
+            f"{stars} stars-gated · {other_skip} other skips · {len(all_results)} total"
+        )
         st.dataframe(
             [
                 {

@@ -90,6 +90,31 @@ class Storage:
     def set_draft_message(self, message: str) -> None:
         self.set_json("draft_message", message)
 
+    def get_telegram_skips(self) -> dict[str, dict]:
+        """id -> {name, reason, detail, at}"""
+        data = self.get_json("telegram_skips", {}) or {}
+        return {str(k): dict(v) for k, v in data.items()}
+
+    def add_telegram_skip(
+        self, target_id: str, name: str, reason: str, detail: str = ""
+    ) -> None:
+        skips = self.get_telegram_skips()
+        skips[str(target_id)] = {
+            "name": name,
+            "reason": reason,
+            "detail": detail,
+            "at": datetime.now(timezone.utc).isoformat(),
+        }
+        self.set_json("telegram_skips", skips)
+
+    def remove_telegram_skip(self, target_id: str) -> None:
+        skips = self.get_telegram_skips()
+        skips.pop(str(target_id), None)
+        self.set_json("telegram_skips", skips)
+
+    def clear_telegram_skips(self) -> None:
+        self.set_json("telegram_skips", {})
+
     def add_send_log(
         self,
         platform: str,

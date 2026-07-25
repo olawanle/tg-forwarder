@@ -8,8 +8,11 @@ Deploy on **Railway** (always-on). The older FastAPI/React/Docker SaaS stack in 
 
 - Connect Telegram (API ID/hash + login code / 2FA) or paste a string session
 - Connect Discord bot and list channels where it can send messages
-- Multi-select targets, compose a message, broadcast with configurable delay
-- FloodWait / Discord rate-limit handling and a simple SQLite send log
+- **Broadcast once** to every Telegram group on the account, then stop until you run it again
+- Auto-skip Telegram Stars / paid-message groups
+- Detect posts wiped by group anti-spam (`MessageEmpty` / missing mapping) and blacklist those groups
+- Honor slowmode / FloodWait (waits up to a configurable limit, default 20 minutes)
+- Optional Discord channels + SQLite send log / blacklist
 
 ## Compliance
 
