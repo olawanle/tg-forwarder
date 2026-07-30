@@ -1,19 +1,27 @@
+# Secrets
 .env
-.venv/
-forwarder_data/
-debug-*.log
-*.err.log
-*.out.log
-*.pdf
-*.session
+.env.*
+!.env.example
 
+# Python
+.venv/
 __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
 .ruff_cache/
-logs/*.log
-frontend/*.log
-frontend/node_modules/
-frontend/dist/
-frontend/.vite/
+
+# App data / sessions
+forwarder_data/
+/app/data/
+*.session
+*.session-journal
+
+# Logs / junk
+debug-*.log
+*.err.log
+*.out.log
+*.pdf
+.DS_Store
+.idea/
+.vscode/

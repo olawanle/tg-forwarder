@@ -9,7 +9,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 DATA_DIR = Path(os.getenv("FORWARDER_DATA_DIR", "forwarder_data"))
-DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 
 @dataclass(frozen=True)
@@ -39,4 +38,5 @@ class Settings:
 
 
 def get_settings() -> Settings:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
     return Settings.from_env()
