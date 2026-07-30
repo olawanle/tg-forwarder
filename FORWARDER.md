@@ -57,9 +57,51 @@ Paste the printed value into `TELEGRAM_SESSION`.
 3. OAuth2 → URL Generator → scopes: `bot` → permissions: **Send Messages** (and View Channels)
 4. Open the invite URL and add the bot to each marketing server
 
+## Friend / new Railway account checklist (fixes Bad Gateway)
+
+If the public URL shows **Bad Gateway**, the proxy cannot reach Streamlit. Check these in order:
+
+1. **Builder = Dockerfile**  
+   Settings → Build → Builder: `Dockerfile`  
+   Dockerfile path: `Dockerfile.forwarder`  
+   (If Nixpacks is used, it installs the old FastAPI stack and **Streamlit is missing** → crash → Bad Gateway.)
+
+2. **Start command** (Settings → Deploy), exactly:
+   ```text
+   sh -c "mkdir -p \"${FORWARDER_DATA_DIR:-/app/data}\" && exec streamlit run forwarder/app.py --server.port=${PORT:-8080} --server.address=0.0.0.0 --server.headless=true --server.enableCORS=false --server.enableXsrfProtection=false"
+   ```
+   Do **not** set a start command with bare `$PORT` and no `sh -c` — Streamlit will crash with “'$PORT' is not a valid integer”.
+
+3. **Public networking**  
+   Settings → Networking → generate a domain. Port should be whatever Railway assigns (leave default; the app binds to `$PORT`).
+
+4. **Free plan sleep**  
+   First open after idle can 502 for 30–60s while the service wakes. Refresh once.
+
+5. **Deploy logs** (Deployments → latest → Deploy Logs)  
+   Healthy lines look like:
+   - `You can now view your Streamlit app in your browser.`
+   - `Network URL: http://0.0.0.0:XXXX`  
+   Bad signs:
+   - `No module named streamlit`
+   - `'$PORT' is not a valid integer`
+   - Python traceback on import
+
+6. **Optional volume**  
+   Not required to boot. Default data dir is `/app/data`.  
+   If you add a volume, mount at `/data` and set `FORWARDER_DATA_DIR=/data`.
+
+7. **Env vars** (can be empty at first; app still loads Connect page):
+   - `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `TELEGRAM_SESSION`
+   - `DISCORD_BOT_TOKEN`, `OWNER_PASSWORD`
+   - `FORWARDER_DATA_DIR=/app/data` (or `/data` with a volume)
+
+8. **Free plan region peak hours**  
+   If deploy fails during EU/US daytime, switch region (e.g. Singapore) or deploy off-peak.
+
 ## Railway deploy
 
-The live deployment is already provisioned:
+Your own live deployment (example):
 
 | Item | Value |
 |------|-------|
@@ -67,7 +109,7 @@ The live deployment is already provisioned:
 | Service | `forwarder` (auto-deploys from `olawanle/tg-forwarder`, branch `main`) |
 | URL | https://forwarder-production-bc52.up.railway.app |
 | Build | Docker, [`Dockerfile.forwarder`](Dockerfile.forwarder) via `RAILWAY_DOCKERFILE_PATH` |
-| Volume | `/data` (persists the SQLite database) |
+| Data | `/app/data` by default (attach a volume at `/data` + `FORWARDER_DATA_DIR=/data` to persist) |
 
 Build note: the repo root also holds the legacy campaign-manager `pyproject.toml`, which Nixpacks picks up instead of Streamlit. [`Dockerfile.forwarder`](Dockerfile.forwarder) installs only `requirements-forwarder.txt`, so the build must stay on the Docker builder.
 
@@ -79,7 +121,7 @@ To reproduce from scratch:
 2. New Railway project → Deploy from repo.
 3. Set variable `RAILWAY_DOCKERFILE_PATH=Dockerfile.forwarder` and use the Docker builder.
 4. Add env vars from the table above (`TELEGRAM_*`, `DISCORD_BOT_TOKEN`, optional `OWNER_PASSWORD`).
-5. Attach a volume mounted at `/data` and set `FORWARDER_DATA_DIR=/data`.
+5. Optional: attach a volume at `/data` and set `FORWARDER_DATA_DIR=/data`.
 6. Generate a domain, then open it → Connect → Targets → Compose → Broadcast.
 
 ## App pages
