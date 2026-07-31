@@ -92,22 +92,32 @@ class TelegramService:
         finally:
             await client.disconnect()
 
-    async def complete_login(
-        self,
-        phone: str,
-        code: str,
-        phone_code_hash: str,
-        password: str | None = None,
-    ) -> str:
+    async def submit_code(
+        self, phone: str, code: str, phone_code_hash: str
+    ) -> tuple[bool, str]:
+        """Submit the login code on the SAME (still-unauthorized) session that
+        requested it — reconnecting with a fresh session here would fail,
+        since Telegram ties the code to the session that requested it, not
+        to the phone number. Returns (needs_2fa_password, session_string);
+        the returned session must be reused for submit_password if needed."""
         client = self._client()
         try:
             await client.connect()
             try:
                 await client.sign_in(phone, code=code, phone_code_hash=phone_code_hash)
             except SessionPasswordNeededError:
-                if not password:
-                    raise RuntimeError("2FA password required")
-                await client.sign_in(password=password)
+                return True, client.session.save()
+            return False, client.session.save()
+        finally:
+            await client.disconnect()
+
+    async def submit_password(self, password: str) -> str:
+        """Second step after submit_code() reports needs_2fa_password=True.
+        Must be constructed with the session string submit_code() returned."""
+        client = self._client()
+        try:
+            await client.connect()
+            await client.sign_in(password=password)
             self.session = client.session.save()
             return self.session
         finally:

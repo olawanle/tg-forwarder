@@ -25,11 +25,17 @@ everyone else — each person gets an email + temporary password that you share 
 directly (there's no email/SMTP integration). They log in, are forced to set a real password,
 then add their own Telegram profile(s).
 
-## Reliable Telegram session generator
+## Adding a Telegram profile
 
-The web login flow is intentionally not used: Streamlit reruns and hosting sleep/restarts can
-lose Telegram's temporary code-login state. Generate and validate the session locally instead,
-then paste it into the app's **Connect** page to create a profile.
+**Recommended — log in with a phone number, right in the app.** On the Connect page, "Add a
+profile — log in with your phone number" walks through the same phone + code flow Telegram
+itself uses to add a new device. Works from a single mobile browser, no computer or script
+needed. Each step reconnects using the exact (still-unauthorized) session string the previous
+step returned instead of a fresh one — that's what makes it reliable across Streamlit reruns,
+unlike an earlier version of this flow that lost the login mid-way.
+
+**Advanced — generate a session string locally.** For technical users who'd rather not type a
+Telegram login code into a web form, or want to move an existing session between environments.
 
 Windows PowerShell:
 
@@ -62,16 +68,15 @@ You can save the result directly to a gitignored local `.env`:
 .\generate_session.ps1 --write-env
 ```
 
-Copy the printed session string into the app's Connect page (**Add a profile**) — not into a
-Railway variable. Treat this value like a password: anyone with it can access the Telegram
-account. It's stored encrypted in the database, never in plaintext.
+Paste the printed session string into the app's Connect page under "Advanced: paste an existing
+session string" — not into a Railway variable. Treat this value like a password: anyone with it
+can access the Telegram account. It's stored encrypted in the database, never in plaintext.
 
 ## Deploy on Railway (fork-friendly)
 
 1. Fork or clone this repo on GitHub.
 2. [Railway](https://railway.app) → **New Project** → **Deploy from GitHub repo**.
-3. Add a **Postgres** database to the project (Railway plugin) — this auto-injects `DATABASE_URL`
-   into the app service, no manual entry needed.
+3. Add a **Postgres** database to the project (Railway plugin).
 4. Open the app service → **Settings**:
    - **Build**: Builder = **Dockerfile** (path `Dockerfile` — default).
    - **Deploy**: **clear any custom Start Command** (leave empty). The image `entrypoint.sh` sets the port from `$PORT`.
@@ -81,7 +86,7 @@ account. It's stored encrypted in the database, never in plaintext.
    |----------|----------|--------|
    | `TELEGRAM_API_ID` | yes | my.telegram.org — shared "which app" credentials for all profiles |
    | `TELEGRAM_API_HASH` | yes | my.telegram.org |
-   | `DATABASE_URL` | yes | auto-injected once the Postgres plugin is attached |
+   | `DATABASE_URL` | yes | Railway does **not** auto-share this across services — set it to `${{Postgres.DATABASE_URL}}` (replace `Postgres` with your DB service's name if you renamed it) |
    | `SESSION_ENCRYPTION_KEY` | yes | generate once: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
    | `ADMIN_EMAIL` | yes | e.g. `goconnect234@gmail.com` — becomes the first admin on boot |
    | `ADMIN_INITIAL_PASSWORD` | yes | admin's own login password, only used once to bootstrap the account |

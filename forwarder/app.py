@@ -95,6 +95,137 @@ def _telegram_service(settings, profile: ProfileRow) -> TelegramService:
     return TelegramService(api_id, api_hash, profile.telegram_session)
 
 
+_LOGIN_WIZARD_KEYS = (
+    "login_wiz_stage",
+    "login_wiz_label",
+    "login_wiz_phone",
+    "login_wiz_session",
+    "login_wiz_hash",
+)
+
+
+def _reset_login_wizard() -> None:
+    for key in _LOGIN_WIZARD_KEYS:
+        st.session_state.pop(key, None)
+
+
+def _phone_login_wizard(settings, store: Storage) -> None:
+    """Log in with a phone number + code, the same way Telegram itself logs in
+    a new device — works from a single mobile browser, no local script needed.
+
+    Each step reconnects using the exact session string the previous step
+    returned (not a fresh one) because Telegram ties the sent code, and later
+    the 2FA check, to the specific (still-unauthorized) session that requested
+    it. Persisting that string in st.session_state across Streamlit reruns is
+    what makes this reliable instead of losing the login mid-flow.
+    """
+    if not settings.telegram_api_id or not settings.telegram_api_hash:
+        st.warning("Set TELEGRAM_API_ID and TELEGRAM_API_HASH in the environment.")
+        return
+
+    stage = st.session_state.get("login_wiz_stage", "phone")
+
+    if stage == "phone":
+        label = st.text_input(
+            "Profile name (e.g. \"My main account\")", key="login_wiz_label_input"
+        )
+        phone = st.text_input(
+            "Phone number with country code (e.g. +15551234567)",
+            key="login_wiz_phone_input",
+        )
+        if st.button("Send login code", type="primary"):
+            if not label.strip() or not phone.strip():
+                st.error("Enter both a profile name and a phone number.")
+            else:
+                try:
+                    tmp = TelegramService(settings.telegram_api_id, settings.telegram_api_hash, "")
+                    phone_code_hash, session = _run(tmp.request_code(phone.strip()))
+                    st.session_state["login_wiz_stage"] = "code"
+                    st.session_state["login_wiz_label"] = label.strip()
+                    st.session_state["login_wiz_phone"] = phone.strip()
+                    st.session_state["login_wiz_session"] = session
+                    st.session_state["login_wiz_hash"] = phone_code_hash
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Could not send a code: {exc}")
+
+    elif stage == "code":
+        st.info(
+            f"Code sent to {st.session_state.get('login_wiz_phone')} — check the Telegram "
+            "app on that phone (it usually arrives as a Telegram message, not SMS)."
+        )
+        code = st.text_input("Login code", key="login_wiz_code_input")
+        cols = st.columns(2)
+        if cols[0].button("Verify code", type="primary"):
+            try:
+                tmp = TelegramService(
+                    settings.telegram_api_id,
+                    settings.telegram_api_hash,
+                    st.session_state["login_wiz_session"],
+                )
+                needs_password, session = _run(
+                    tmp.submit_code(
+                        st.session_state["login_wiz_phone"],
+                        code.replace(" ", "").strip(),
+                        st.session_state["login_wiz_hash"],
+                    )
+                )
+                st.session_state["login_wiz_session"] = session
+                if needs_password:
+                    st.session_state["login_wiz_stage"] = "password"
+                    st.rerun()
+                else:
+                    new_id = store.create_profile(
+                        st.session_state["user_id"],
+                        st.session_state["login_wiz_label"],
+                        session,
+                    )
+                    st.session_state["active_profile_id"] = new_id
+                    label = st.session_state["login_wiz_label"]
+                    _reset_login_wizard()
+                    st.success(f"Profile '{label}' connected.")
+                    st.rerun()
+            except Exception as exc:
+                st.error(f"Invalid or expired code: {exc}")
+        if cols[1].button("Start over"):
+            _reset_login_wizard()
+            st.rerun()
+
+    elif stage == "password":
+        st.info(
+            "This account has Two-Step Verification enabled — enter its password to finish."
+        )
+        password = st.text_input(
+            "Telegram Two-Step Verification password",
+            type="password",
+            key="login_wiz_password_input",
+        )
+        cols = st.columns(2)
+        if cols[0].button("Confirm password", type="primary"):
+            try:
+                tmp = TelegramService(
+                    settings.telegram_api_id,
+                    settings.telegram_api_hash,
+                    st.session_state["login_wiz_session"],
+                )
+                session = _run(tmp.submit_password(password))
+                new_id = store.create_profile(
+                    st.session_state["user_id"],
+                    st.session_state["login_wiz_label"],
+                    session,
+                )
+                st.session_state["active_profile_id"] = new_id
+                label = st.session_state["login_wiz_label"]
+                _reset_login_wizard()
+                st.success(f"Profile '{label}' connected.")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Incorrect password: {exc}")
+        if cols[1].button("Start over", key="password_start_over"):
+            _reset_login_wizard()
+            st.rerun()
+
+
 def page_connect(settings, store: Storage, profile: ProfileRow | None) -> None:
     st.header("Connect")
     st.caption(
@@ -132,11 +263,17 @@ def page_connect(settings, store: Storage, profile: ProfileRow | None) -> None:
         else:
             st.info("No profiles yet — add one below to get started.")
 
-        with st.expander("Add a profile", expanded=not profiles):
+        with st.expander("Add a profile — log in with your phone number", expanded=not profiles):
+            st.caption(
+                "Works from a single phone, no computer or script needed — the same "
+                "way Telegram logs in any new device."
+            )
+            _phone_login_wizard(settings, store)
+
+        with st.expander("Advanced: paste an existing session string"):
             st.markdown(
-                "Generate a session **locally** with the bootstrap script, then paste it "
-                "here. Streamlit reruns and sleeping containers can interrupt Telegram's "
-                "code-login state, so in-app login isn't used."
+                "For technical users who already have a session (e.g. generated locally "
+                "with the bootstrap script)."
             )
             st.code(
                 "powershell -ExecutionPolicy Bypass -File .\\generate_session.ps1",
