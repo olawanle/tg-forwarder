@@ -1,18 +1,74 @@
 from __future__ import annotations
 
 import json
-import sqlite3
+import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Iterator
+
+import psycopg2
+import psycopg2.extras
+from psycopg2 import pool as pg_pool
+
+from forwarder import crypto
+
+# psycopg2 connections are relatively expensive to open, and Storage() is
+# constructed fresh on every Streamlit rerun and on every job-runner thread.
+# Share one small pool per database_url across all Storage instances instead
+# of opening a pool per instance (which would exhaust Postgres connections).
+_POOLS: dict[str, pg_pool.ThreadedConnectionPool] = {}
+_POOLS_LOCK = threading.Lock()
+
+
+def _get_pool(database_url: str) -> pg_pool.ThreadedConnectionPool:
+    if database_url not in _POOLS:
+        with _POOLS_LOCK:
+            if database_url not in _POOLS:
+                _POOLS[database_url] = pg_pool.ThreadedConnectionPool(
+                    1, 10, dsn=database_url
+                )
+    return _POOLS[database_url]
+
+
+def _jsonval(value: Any) -> Any:
+    """psycopg2 auto-parses jsonb columns into Python objects, but be
+    defensive in case a driver version ever returns raw text."""
+    if isinstance(value, (list, dict)):
+        return value
+    if value is None:
+        return None
+    return json.loads(value)
+
+
+@dataclass
+class UserRow:
+    id: int
+    email: str
+    password_hash: str
+    role: str
+    is_active: bool
+    must_change_password: bool
+    created_at: str
+
+
+@dataclass
+class ProfileRow:
+    id: int
+    user_id: int
+    label: str
+    telegram_session: str
+    telegram_api_id: int | None
+    telegram_api_hash: str | None
+    draft_message: str
+    created_at: str
+    updated_at: str
 
 
 @dataclass
 class SendLogRow:
     id: int
     created_at: str
+    profile_id: int
     platform: str
     target_id: str
     target_name: str
@@ -23,6 +79,7 @@ class SendLogRow:
 @dataclass
 class JobRow:
     id: int
+    profile_id: int
     created_at: str
     updated_at: str
     status: str
@@ -51,172 +108,388 @@ class JobResultRow:
     detail: str
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
 class Storage:
-    def __init__(self, db_path: Path) -> None:
-        self.db_path = db_path
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+    def __init__(self, database_url: str) -> None:
+        if not database_url:
+            raise RuntimeError("DATABASE_URL is not set")
+        self._pool = _get_pool(database_url)
         self._init_db()
 
     @contextmanager
-    def _conn(self) -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(self.db_path, timeout=60)
-        conn.row_factory = sqlite3.Row
+    def _conn(self) -> Iterator[psycopg2.extensions.connection]:
+        conn = self._pool.getconn()
+        conn.cursor_factory = psycopg2.extras.RealDictCursor
         try:
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA busy_timeout=60000")
             yield conn
             conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
         finally:
-            conn.close()
+            self._pool.putconn(conn)
 
     def _init_db(self) -> None:
-        with self._conn() as conn:
-            conn.executescript(
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
                 """
-                CREATE TABLE IF NOT EXISTS kv (
-                    key TEXT PRIMARY KEY,
-                    value TEXT NOT NULL
+                CREATE TABLE IF NOT EXISTS users (
+                    id SERIAL PRIMARY KEY,
+                    email TEXT UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    role TEXT NOT NULL DEFAULT 'user',
+                    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                    must_change_password BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
                 );
-                CREATE TABLE IF NOT EXISTS send_log (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    created_at TEXT NOT NULL,
+
+                CREATE TABLE IF NOT EXISTS profiles (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    label TEXT NOT NULL,
+                    telegram_session_enc BYTEA NOT NULL,
+                    telegram_api_id INTEGER,
+                    telegram_api_hash TEXT,
+                    draft_message TEXT NOT NULL DEFAULT '',
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                );
+                CREATE INDEX IF NOT EXISTS idx_profiles_user ON profiles(user_id);
+
+                CREATE TABLE IF NOT EXISTS jobs (
+                    id SERIAL PRIMARY KEY,
+                    profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    status TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    delay_seconds DOUBLE PRECISION NOT NULL,
+                    max_slowmode_wait INTEGER NOT NULL,
+                    include_discord BOOLEAN NOT NULL DEFAULT FALSE,
+                    total INTEGER NOT NULL DEFAULT 0,
+                    done INTEGER NOT NULL DEFAULT 0,
+                    current_name TEXT NOT NULL DEFAULT '',
+                    current_detail TEXT NOT NULL DEFAULT '',
+                    error TEXT NOT NULL DEFAULT '',
+                    pending_json JSONB NOT NULL DEFAULT '[]',
+                    summary_json JSONB NOT NULL DEFAULT '{}'
+                );
+                CREATE INDEX IF NOT EXISTS idx_jobs_profile_status ON jobs(profile_id, status);
+
+                CREATE TABLE IF NOT EXISTS job_results (
+                    id SERIAL PRIMARY KEY,
+                    job_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
                     platform TEXT NOT NULL,
                     target_id TEXT NOT NULL,
                     target_name TEXT NOT NULL,
                     status TEXT NOT NULL,
                     detail TEXT NOT NULL DEFAULT ''
                 );
-                CREATE TABLE IF NOT EXISTS jobs (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    message TEXT NOT NULL,
-                    delay_seconds REAL NOT NULL,
-                    max_slowmode_wait INTEGER NOT NULL,
-                    include_discord INTEGER NOT NULL DEFAULT 0,
-                    total INTEGER NOT NULL DEFAULT 0,
-                    done INTEGER NOT NULL DEFAULT 0,
-                    current_name TEXT NOT NULL DEFAULT '',
-                    current_detail TEXT NOT NULL DEFAULT '',
-                    error TEXT NOT NULL DEFAULT '',
-                    pending_json TEXT NOT NULL DEFAULT '[]',
-                    summary_json TEXT NOT NULL DEFAULT '{}'
-                );
-                CREATE TABLE IF NOT EXISTS job_results (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    job_id INTEGER NOT NULL,
-                    created_at TEXT NOT NULL,
+                CREATE INDEX IF NOT EXISTS idx_job_results_job ON job_results(job_id);
+
+                CREATE TABLE IF NOT EXISTS send_log (
+                    id SERIAL PRIMARY KEY,
+                    profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
                     platform TEXT NOT NULL,
                     target_id TEXT NOT NULL,
                     target_name TEXT NOT NULL,
                     status TEXT NOT NULL,
-                    detail TEXT NOT NULL DEFAULT '',
-                    FOREIGN KEY(job_id) REFERENCES jobs(id)
+                    detail TEXT NOT NULL DEFAULT ''
                 );
-                CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
-                CREATE INDEX IF NOT EXISTS idx_job_results_job ON job_results(job_id);
+                CREATE INDEX IF NOT EXISTS idx_send_log_profile ON send_log(profile_id, id DESC);
+
+                CREATE TABLE IF NOT EXISTS telegram_skips (
+                    profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+                    target_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    detail TEXT NOT NULL DEFAULT '',
+                    at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    PRIMARY KEY (profile_id, target_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS discord_selected_channels (
+                    profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+                    channel_id TEXT NOT NULL,
+                    PRIMARY KEY (profile_id, channel_id)
+                );
                 """
             )
 
-    def get_json(self, key: str, default: Any = None) -> Any:
-        with self._conn() as conn:
-            row = conn.execute("SELECT value FROM kv WHERE key = ?", (key,)).fetchone()
-        if row is None:
-            return default
-        return json.loads(row["value"])
+    # ---------------------------------------------------------------- users
 
-    def set_json(self, key: str, value: Any) -> None:
-        payload = json.dumps(value)
-        with self._conn() as conn:
-            conn.execute(
-                "INSERT INTO kv(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                (key, payload),
+    def create_user(
+        self,
+        email: str,
+        password_hash: str,
+        role: str = "user",
+        must_change_password: bool = True,
+    ) -> int:
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO users(email, password_hash, role, must_change_password)
+                VALUES (%s, %s, %s, %s)
+                RETURNING id
+                """,
+                (email.strip().lower(), password_hash, role, must_change_password),
             )
+            return int(cur.fetchone()["id"])
 
-    def get_selected_targets(self) -> dict[str, list[str]]:
-        data = self.get_json("selected_targets", {"telegram": [], "discord": []})
-        return {
-            "telegram": list(data.get("telegram", [])),
-            "discord": list(data.get("discord", [])),
-        }
-
-    def set_selected_targets(self, telegram_ids: list[str], discord_ids: list[str]) -> None:
-        self.set_json(
-            "selected_targets",
-            {"telegram": telegram_ids, "discord": discord_ids},
+    @staticmethod
+    def _user_from_row(row: Any) -> UserRow:
+        return UserRow(
+            id=row["id"],
+            email=row["email"],
+            password_hash=row["password_hash"],
+            role=row["role"],
+            is_active=bool(row["is_active"]),
+            must_change_password=bool(row["must_change_password"]),
+            created_at=str(row["created_at"]),
         )
 
-    def get_draft_message(self) -> str:
-        return str(self.get_json("draft_message", "") or "")
+    def get_user_by_email(self, email: str) -> UserRow | None:
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM users WHERE email = %s", (email.strip().lower(),)
+            )
+            row = cur.fetchone()
+        return self._user_from_row(row) if row else None
 
-    def set_draft_message(self, message: str) -> None:
-        self.set_json("draft_message", message)
+    def get_user_by_id(self, user_id: int) -> UserRow | None:
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT * FROM users WHERE id = %s", (user_id,))
+            row = cur.fetchone()
+        return self._user_from_row(row) if row else None
 
-    def get_telegram_skips(self) -> dict[str, dict]:
-        data = self.get_json("telegram_skips", {}) or {}
-        return {str(k): dict(v) for k, v in data.items()}
+    def list_users(self) -> list[UserRow]:
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT * FROM users ORDER BY created_at ASC")
+            rows = cur.fetchall()
+        return [self._user_from_row(r) for r in rows]
+
+    def count_admins(self) -> int:
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) AS n FROM users WHERE role = 'admin'")
+            return int(cur.fetchone()["n"])
+
+    def set_user_active(self, user_id: int, active: bool) -> None:
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE users SET is_active = %s WHERE id = %s", (active, user_id)
+            )
+
+    def set_user_password(
+        self, user_id: int, password_hash: str, must_change_password: bool = False
+    ) -> None:
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE users SET password_hash = %s, must_change_password = %s WHERE id = %s",
+                (password_hash, must_change_password, user_id),
+            )
+
+    # ------------------------------------------------------------- profiles
+
+    def create_profile(
+        self,
+        user_id: int,
+        label: str,
+        telegram_session: str,
+        telegram_api_id: int | None = None,
+        telegram_api_hash: str | None = None,
+    ) -> int:
+        enc = crypto.encrypt(telegram_session)
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO profiles(
+                    user_id, label, telegram_session_enc, telegram_api_id, telegram_api_hash
+                ) VALUES (%s, %s, %s, %s, %s)
+                RETURNING id
+                """,
+                (user_id, label, psycopg2.Binary(enc), telegram_api_id, telegram_api_hash),
+            )
+            return int(cur.fetchone()["id"])
+
+    @staticmethod
+    def _profile_from_row(row: Any) -> ProfileRow:
+        return ProfileRow(
+            id=row["id"],
+            user_id=row["user_id"],
+            label=row["label"],
+            telegram_session=crypto.decrypt(row["telegram_session_enc"]),
+            telegram_api_id=row["telegram_api_id"],
+            telegram_api_hash=row["telegram_api_hash"],
+            draft_message=row["draft_message"] or "",
+            created_at=str(row["created_at"]),
+            updated_at=str(row["updated_at"]),
+        )
+
+    def get_profile(self, profile_id: int) -> ProfileRow | None:
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT * FROM profiles WHERE id = %s", (profile_id,))
+            row = cur.fetchone()
+        return self._profile_from_row(row) if row else None
+
+    def list_profiles_for_user(self, user_id: int) -> list[ProfileRow]:
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM profiles WHERE user_id = %s ORDER BY created_at ASC",
+                (user_id,),
+            )
+            rows = cur.fetchall()
+        return [self._profile_from_row(r) for r in rows]
+
+    def update_profile_session(self, profile_id: int, telegram_session: str) -> None:
+        enc = crypto.encrypt(telegram_session)
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE profiles
+                SET telegram_session_enc = %s, updated_at = now()
+                WHERE id = %s
+                """,
+                (psycopg2.Binary(enc), profile_id),
+            )
+
+    def set_draft_message(self, profile_id: int, message: str) -> None:
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE profiles SET draft_message = %s, updated_at = now() WHERE id = %s",
+                (message, profile_id),
+            )
+
+    # --------------------------------------------------------- skip / block
+
+    def get_telegram_skips(self, profile_id: int) -> dict[str, dict]:
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM telegram_skips WHERE profile_id = %s", (profile_id,)
+            )
+            rows = cur.fetchall()
+        return {
+            row["target_id"]: {
+                "name": row["name"],
+                "reason": row["reason"],
+                "detail": row["detail"],
+                "at": str(row["at"]),
+            }
+            for row in rows
+        }
 
     def add_telegram_skip(
-        self, target_id: str, name: str, reason: str, detail: str = ""
+        self, profile_id: int, target_id: str, name: str, reason: str, detail: str = ""
     ) -> None:
-        skips = self.get_telegram_skips()
-        skips[str(target_id)] = {
-            "name": name,
-            "reason": reason,
-            "detail": detail,
-            "at": _now(),
-        }
-        self.set_json("telegram_skips", skips)
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO telegram_skips(profile_id, target_id, name, reason, detail, at)
+                VALUES (%s, %s, %s, %s, %s, now())
+                ON CONFLICT (profile_id, target_id)
+                DO UPDATE SET name = excluded.name, reason = excluded.reason,
+                              detail = excluded.detail, at = excluded.at
+                """,
+                (profile_id, str(target_id), name, reason, detail),
+            )
 
-    def remove_telegram_skip(self, target_id: str) -> None:
-        skips = self.get_telegram_skips()
-        skips.pop(str(target_id), None)
-        self.set_json("telegram_skips", skips)
+    def remove_telegram_skip(self, profile_id: int, target_id: str) -> None:
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM telegram_skips WHERE profile_id = %s AND target_id = %s",
+                (profile_id, str(target_id)),
+            )
 
-    def clear_telegram_skips(self) -> None:
-        self.set_json("telegram_skips", {})
+    def clear_telegram_skips(self, profile_id: int) -> None:
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM telegram_skips WHERE profile_id = %s", (profile_id,)
+            )
+
+    # --------------------------------------------------------------- discord
+
+    def get_selected_discord_channels(self, profile_id: int) -> list[str]:
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT channel_id FROM discord_selected_channels WHERE profile_id = %s",
+                (profile_id,),
+            )
+            rows = cur.fetchall()
+        return [r["channel_id"] for r in rows]
+
+    def set_selected_discord_channels(
+        self, profile_id: int, channel_ids: list[str]
+    ) -> None:
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM discord_selected_channels WHERE profile_id = %s",
+                (profile_id,),
+            )
+            for cid in channel_ids:
+                cur.execute(
+                    """
+                    INSERT INTO discord_selected_channels(profile_id, channel_id)
+                    VALUES (%s, %s) ON CONFLICT DO NOTHING
+                    """,
+                    (profile_id, str(cid)),
+                )
+
+    # ------------------------------------------------------------- send log
 
     def add_send_log(
         self,
+        profile_id: int,
         platform: str,
         target_id: str,
         target_name: str,
         status: str,
         detail: str = "",
     ) -> None:
-        with self._conn() as conn:
-            conn.execute(
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
                 """
-                INSERT INTO send_log(created_at, platform, target_id, target_name, status, detail)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO send_log(profile_id, platform, target_id, target_name, status, detail)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 """,
-                (_now(), platform, target_id, target_name, status, detail),
+                (profile_id, platform, target_id, target_name, status, detail),
             )
 
-    def list_send_logs(self, limit: int = 100) -> list[SendLogRow]:
-        with self._conn() as conn:
-            rows = conn.execute(
+    def list_send_logs(self, profile_id: int, limit: int = 100) -> list[SendLogRow]:
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
                 """
-                SELECT id, created_at, platform, target_id, target_name, status, detail
+                SELECT id, created_at, profile_id, platform, target_id, target_name, status, detail
                 FROM send_log
+                WHERE profile_id = %s
                 ORDER BY id DESC
-                LIMIT ?
+                LIMIT %s
                 """,
-                (limit,),
-            ).fetchall()
-        return [SendLogRow(**dict(row)) for row in rows]
+                (profile_id, limit),
+            )
+            rows = cur.fetchall()
+        return [
+            SendLogRow(
+                id=r["id"],
+                created_at=str(r["created_at"]),
+                profile_id=r["profile_id"],
+                platform=r["platform"],
+                target_id=r["target_id"],
+                target_name=r["target_name"],
+                status=r["status"],
+                detail=r["detail"],
+            )
+            for r in rows
+        ]
+
+    # ----------------------------------------------------------------- jobs
 
     @staticmethod
-    def _job_from_row(row: sqlite3.Row) -> JobRow:
+    def _job_from_row(row: Any) -> JobRow:
         return JobRow(
             id=row["id"],
-            created_at=row["created_at"],
-            updated_at=row["updated_at"],
+            profile_id=row["profile_id"],
+            created_at=str(row["created_at"]),
+            updated_at=str(row["updated_at"]),
             status=row["status"],
             message=row["message"],
             delay_seconds=float(row["delay_seconds"]),
@@ -227,71 +500,79 @@ class Storage:
             current_name=row["current_name"] or "",
             current_detail=row["current_detail"] or "",
             error=row["error"] or "",
-            pending=json.loads(row["pending_json"] or "[]"),
-            summary=json.loads(row["summary_json"] or "{}"),
+            pending=_jsonval(row["pending_json"]) or [],
+            summary=_jsonval(row["summary_json"]) or {},
         )
 
     def create_job(
         self,
+        profile_id: int,
         message: str,
         delay_seconds: float,
         max_slowmode_wait: int,
         include_discord: bool,
     ) -> int:
-        now = _now()
-        with self._conn() as conn:
-            cur = conn.execute(
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
                 """
                 INSERT INTO jobs(
-                    created_at, updated_at, status, message, delay_seconds,
+                    profile_id, status, message, delay_seconds,
                     max_slowmode_wait, include_discord, total, done,
                     current_name, current_detail, error, pending_json, summary_json
-                ) VALUES (?, ?, 'queued', ?, ?, ?, ?, 0, 0, '', 'Queued', '', '[]', '{}')
+                ) VALUES (%s, 'queued', %s, %s, %s, %s, 0, 0, '', 'Queued', '', '[]', '{}')
+                RETURNING id
                 """,
                 (
-                    now,
-                    now,
+                    profile_id,
                     message,
                     delay_seconds,
                     max_slowmode_wait,
-                    1 if include_discord else 0,
+                    include_discord,
                 ),
             )
-            return int(cur.lastrowid)
+            return int(cur.fetchone()["id"])
 
     def get_job(self, job_id: int) -> JobRow | None:
-        with self._conn() as conn:
-            row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT * FROM jobs WHERE id = %s", (job_id,))
+            row = cur.fetchone()
         return self._job_from_row(row) if row else None
 
-    def get_active_job(self) -> JobRow | None:
-        with self._conn() as conn:
-            row = conn.execute(
+    def get_active_job(self, profile_id: int) -> JobRow | None:
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
                 """
                 SELECT * FROM jobs
-                WHERE status IN ('queued', 'running')
+                WHERE profile_id = %s AND status IN ('queued', 'running')
                 ORDER BY id DESC
                 LIMIT 1
-                """
-            ).fetchone()
+                """,
+                (profile_id,),
+            )
+            row = cur.fetchone()
         return self._job_from_row(row) if row else None
 
-    def get_latest_job(self) -> JobRow | None:
-        with self._conn() as conn:
-            row = conn.execute(
-                "SELECT * FROM jobs ORDER BY id DESC LIMIT 1"
-            ).fetchone()
+    def get_latest_job(self, profile_id: int) -> JobRow | None:
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM jobs WHERE profile_id = %s ORDER BY id DESC LIMIT 1",
+                (profile_id,),
+            )
+            row = cur.fetchone()
         return self._job_from_row(row) if row else None
 
     def list_resumable_jobs(self) -> list[JobRow]:
-        with self._conn() as conn:
-            rows = conn.execute(
+        """Unscoped across all profiles — used on boot to resume every
+        profile's own interrupted/queued job."""
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
                 """
                 SELECT * FROM jobs
                 WHERE status IN ('interrupted', 'queued', 'running')
                 ORDER BY id ASC
                 """
-            ).fetchall()
+            )
+            rows = cur.fetchall()
         return [self._job_from_row(r) for r in rows]
 
     def update_job(self, job_id: int, **fields: Any) -> None:
@@ -317,23 +598,19 @@ class Storage:
             if key not in allowed:
                 continue
             if key == "pending":
-                cols.append("pending_json = ?")
-                vals.append(json.dumps(value))
+                cols.append("pending_json = %s")
+                vals.append(psycopg2.extras.Json(value))
             elif key == "summary":
-                cols.append("summary_json = ?")
-                vals.append(json.dumps(value))
-            elif key == "include_discord":
-                cols.append("include_discord = ?")
-                vals.append(1 if value else 0)
+                cols.append("summary_json = %s")
+                vals.append(psycopg2.extras.Json(value))
             else:
-                cols.append(f"{key} = ?")
+                cols.append(f"{key} = %s")
                 vals.append(value)
-        cols.append("updated_at = ?")
-        vals.append(_now())
+        cols.append("updated_at = now()")
         vals.append(job_id)
-        with self._conn() as conn:
-            conn.execute(
-                f"UPDATE jobs SET {', '.join(cols)} WHERE id = ?",
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE jobs SET {', '.join(cols)} WHERE id = %s",
                 vals,
             )
 
@@ -346,47 +623,59 @@ class Storage:
         status: str,
         detail: str = "",
     ) -> None:
-        with self._conn() as conn:
-            conn.execute(
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
                 """
                 INSERT INTO job_results(
-                    job_id, created_at, platform, target_id, target_name, status, detail
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    job_id, platform, target_id, target_name, status, detail
+                ) VALUES (%s, %s, %s, %s, %s, %s)
                 """,
-                (job_id, _now(), platform, target_id, target_name, status, detail),
+                (job_id, platform, target_id, target_name, status, detail),
             )
 
     def list_job_results(self, job_id: int, limit: int = 500) -> list[JobResultRow]:
-        with self._conn() as conn:
-            rows = conn.execute(
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
                 """
                 SELECT id, job_id, created_at, platform, target_id, target_name, status, detail
                 FROM job_results
-                WHERE job_id = ?
+                WHERE job_id = %s
                 ORDER BY id ASC
-                LIMIT ?
+                LIMIT %s
                 """,
                 (job_id, limit),
-            ).fetchall()
-        return [JobResultRow(**dict(row)) for row in rows]
+            )
+            rows = cur.fetchall()
+        return [
+            JobResultRow(
+                id=r["id"],
+                job_id=r["job_id"],
+                created_at=str(r["created_at"]),
+                platform=r["platform"],
+                target_id=r["target_id"],
+                target_name=r["target_name"],
+                status=r["status"],
+                detail=r["detail"],
+            )
+            for r in rows
+        ]
 
     def mark_orphaned_jobs_interrupted(self) -> list[int]:
         """Mark queued/running jobs as interrupted after process restart."""
-        ids: list[int] = []
-        with self._conn() as conn:
-            rows = conn.execute(
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
                 "SELECT id FROM jobs WHERE status IN ('queued', 'running')"
-            ).fetchall()
-            for row in rows:
-                ids.append(int(row["id"]))
-                conn.execute(
+            )
+            ids = [int(row["id"]) for row in cur.fetchall()]
+            if ids:
+                cur.execute(
                     """
                     UPDATE jobs
                     SET status = 'interrupted',
                         current_detail = 'Process restarted — waiting to resume',
-                        updated_at = ?
-                    WHERE id = ?
+                        updated_at = now()
+                    WHERE id = ANY(%s)
                     """,
-                    (_now(), row["id"]),
+                    (ids,),
                 )
         return ids

@@ -416,6 +416,34 @@ class TelegramService:
         finally:
             await client.disconnect()
 
+    async def leave_groups(
+        self, targets: list[dict], delay_seconds: float = 2.0
+    ) -> list[SendResult]:
+        """Leave each given group/supergroup (id/name dicts). Used to clean up
+        blacklisted groups the account no longer wants to be a member of."""
+        client = self._client()
+        results: list[SendResult] = []
+        try:
+            await client.connect()
+            if not await client.is_user_authorized():
+                raise RuntimeError("Telegram session is not authorized")
+            for index, target in enumerate(targets):
+                target_id = str(target["id"])
+                name = str(target.get("name") or target_id)
+                try:
+                    entity = await asyncio.wait_for(
+                        client.get_entity(int(target_id)), timeout=30
+                    )
+                    await asyncio.wait_for(client.delete_dialog(entity), timeout=30)
+                    results.append(SendResult(target_id, name, "left", "left the group"))
+                except Exception as exc:
+                    results.append(SendResult(target_id, name, "error", str(exc)[:280]))
+                if index < len(targets) - 1 and delay_seconds > 0:
+                    await asyncio.sleep(delay_seconds)
+            return results
+        finally:
+            await client.disconnect()
+
     async def broadcast(
         self,
         message: str,

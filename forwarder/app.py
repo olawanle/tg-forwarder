@@ -12,10 +12,12 @@ if str(_ROOT) not in sys.path:
 
 import streamlit as st
 
+from forwarder.admin import page_admin
+from forwarder.auth import authenticate, bootstrap_admin, hash_password
 from forwarder.config import get_settings
 from forwarder.discord_service import DiscordService
 from forwarder.job_runner import get_job_runner
-from forwarder.storage import JobRow, Storage
+from forwarder.storage import JobRow, ProfileRow, Storage
 from forwarder.telegram_service import TelegramService
 
 
@@ -23,97 +25,159 @@ def _run(coro):
     return asyncio.run(coro)
 
 
-def _gate(password: str) -> bool:
-    if not password:
-        return True
-    if st.session_state.get("authed"):
-        return True
+def _login_page(store: Storage) -> None:
     st.title("Group Forwarder")
-    entered = st.text_input("Owner password", type="password")
-    if st.button("Unlock"):
-        if entered == password:
-            st.session_state["authed"] = True
+    st.caption("Log in with the account your admin created for you. New accounts are added by the admin, not self-registration.")
+    email = st.text_input("Email")
+    password = st.text_input("Password", type="password")
+    if st.button("Log in", type="primary"):
+        user = authenticate(store, email, password)
+        if user:
+            st.session_state["user_id"] = user.id
+            st.session_state["role"] = user.role
+            st.session_state["user_email"] = user.email
+            st.session_state["must_change_password"] = user.must_change_password
             st.rerun()
-        st.error("Wrong password")
-    return False
+        else:
+            st.error("Invalid email or password, or the account is disabled.")
 
 
-def _services():
-    settings = get_settings()
-    tg_session = st.session_state.get("telegram_session") or settings.telegram_session
-    tg = TelegramService(settings.telegram_api_id, settings.telegram_api_hash, tg_session)
-    dc = DiscordService(settings.discord_bot_token)
-    store = Storage(settings.db_path)
-    return settings, tg, dc, store
+def _change_password_page(store: Storage) -> None:
+    st.title("Set a new password")
+    st.caption("Your admin created this account with a temporary password. Choose a new one to continue.")
+    new_pw = st.text_input("New password", type="password")
+    confirm_pw = st.text_input("Confirm new password", type="password")
+    if st.button("Update password", type="primary"):
+        if len(new_pw) < 8:
+            st.error("Password must be at least 8 characters.")
+        elif new_pw != confirm_pw:
+            st.error("Passwords do not match.")
+        else:
+            store.set_user_password(
+                st.session_state["user_id"], hash_password(new_pw), must_change_password=False
+            )
+            st.session_state["must_change_password"] = False
+            st.success("Password updated.")
+            st.rerun()
 
 
-def page_connect(settings, tg: TelegramService, dc: DiscordService) -> None:
+def _require_auth(store: Storage) -> bool:
+    if not st.session_state.get("user_id"):
+        _login_page(store)
+        return False
+    if st.session_state.get("must_change_password"):
+        _change_password_page(store)
+        return False
+    return True
+
+
+def _profiles_for_current_user(store: Storage) -> list[ProfileRow]:
+    return store.list_profiles_for_user(st.session_state["user_id"])
+
+
+def _ensure_active_profile(store: Storage) -> ProfileRow | None:
+    profiles = _profiles_for_current_user(store)
+    if not profiles:
+        st.session_state["active_profile_id"] = None
+        return None
+    active_id = st.session_state.get("active_profile_id")
+    match = next((p for p in profiles if p.id == active_id), None)
+    if match:
+        return match
+    chosen = profiles[-1]
+    st.session_state["active_profile_id"] = chosen.id
+    return chosen
+
+
+def _telegram_service(settings, profile: ProfileRow) -> TelegramService:
+    api_id = profile.telegram_api_id or settings.telegram_api_id
+    api_hash = profile.telegram_api_hash or settings.telegram_api_hash
+    return TelegramService(api_id, api_hash, profile.telegram_session)
+
+
+def page_connect(settings, store: Storage, profile: ProfileRow | None) -> None:
     st.header("Connect")
     st.caption(
-        "Telegram uses your personal account (Telethon). "
-        "Discord uses a bot invited to each server."
+        "Each profile is one Telegram account (Telethon session). "
+        "Discord uses a single bot shared by everyone."
     )
 
     col1, col2 = st.columns(2)
     with col1:
-        st.subheader("Telegram")
-        if not tg.configured():
-            st.warning("Set TELEGRAM_API_ID and TELEGRAM_API_HASH in the environment.")
-        else:
-            status = _run(tg.status())
-            if status["ok"]:
-                st.success(status["detail"])
-            else:
-                st.info(status["detail"])
-
-            with st.expander("Login / refresh session", expanded=not tg.has_session()):
-                phone = st.text_input("Phone (+countrycode...)", key="tg_phone")
-                if st.button("Send login code"):
-                    try:
-                        phone_code_hash, session = _run(tg.request_code(phone.strip()))
-                        st.session_state["telegram_session"] = session
-                        st.session_state["tg_phone"] = phone.strip()
-                        st.session_state["tg_phone_code_hash"] = phone_code_hash
-                        st.success("Code requested. Check Telegram.")
-                    except Exception as exc:
-                        st.error(str(exc))
-
-                code = st.text_input("Login code", key="tg_code")
-                password = st.text_input("2FA password (if any)", type="password", key="tg_2fa")
-                if st.button("Complete login"):
-                    try:
-                        if st.session_state.get("telegram_session"):
-                            tg.session = st.session_state["telegram_session"]
-                        phone_val = st.session_state.get("tg_phone") or phone.strip()
-                        phone_code_hash = st.session_state.get("tg_phone_code_hash")
-                        if not phone_code_hash:
-                            raise RuntimeError("Request a login code first")
-                        session = _run(
-                            tg.complete_login(
-                                phone_val,
-                                code.strip(),
-                                phone_code_hash,
-                                password.strip() or None,
-                            )
-                        )
-                        st.session_state["telegram_session"] = session
-                        st.success("Logged in. Copy the session into TELEGRAM_SESSION for Railway.")
-                        st.code(session, language="text")
-                    except Exception as exc:
-                        st.error(str(exc))
-
-            existing = st.text_area(
-                "Or paste an existing TELEGRAM_SESSION",
-                value=st.session_state.get("telegram_session") or settings.telegram_session,
-                height=80,
+        st.subheader("Telegram profiles")
+        profiles = _profiles_for_current_user(store)
+        if profiles:
+            options = {p.id: p.label for p in profiles}
+            current = profile.id if profile else profiles[0].id
+            chosen = st.selectbox(
+                "Active profile",
+                options=list(options.keys()),
+                index=list(options.keys()).index(current),
+                format_func=lambda i: options[i],
+                key="connect_profile_select",
             )
-            if st.button("Use pasted session"):
-                st.session_state["telegram_session"] = existing.strip()
-                st.success("Session stored for this browser session.")
+            if chosen != st.session_state.get("active_profile_id"):
+                st.session_state["active_profile_id"] = chosen
                 st.rerun()
+
+            if not settings.telegram_api_id or not settings.telegram_api_hash:
+                st.warning("Set TELEGRAM_API_ID and TELEGRAM_API_HASH in the environment.")
+            elif profile:
+                tg = _telegram_service(settings, profile)
+                status = _run(tg.status())
+                if status["ok"]:
+                    st.success(status["detail"])
+                else:
+                    st.info(status["detail"])
+        else:
+            st.info("No profiles yet — add one below to get started.")
+
+        with st.expander("Add a profile", expanded=not profiles):
+            st.markdown(
+                "Generate a session **locally** with the bootstrap script, then paste it "
+                "here. Streamlit reruns and sleeping containers can interrupt Telegram's "
+                "code-login state, so in-app login isn't used."
+            )
+            st.code(
+                "powershell -ExecutionPolicy Bypass -File .\\generate_session.ps1",
+                language="powershell",
+            )
+            st.caption("Prefer QR login? Add `--qr` after the script command.")
+            label = st.text_input(
+                "Profile name (e.g. \"My main account\")", key="new_profile_label"
+            )
+            session_value = st.text_input(
+                "Paste the generated session string",
+                type="password",
+                key="new_profile_session",
+            )
+            if st.button("Save profile"):
+                if not label.strip() or not session_value.strip():
+                    st.error("Both a name and a session string are required.")
+                else:
+                    new_id = store.create_profile(
+                        st.session_state["user_id"], label.strip(), session_value.strip()
+                    )
+                    st.session_state["active_profile_id"] = new_id
+                    st.success(f"Profile '{label}' saved.")
+                    st.rerun()
+
+        if profile:
+            with st.expander(f"Replace the session for '{profile.label}'"):
+                replacement = st.text_input(
+                    "New session string", type="password", key="replace_profile_session"
+                )
+                if st.button("Update session"):
+                    if replacement.strip():
+                        store.update_profile_session(profile.id, replacement.strip())
+                        st.success("Session updated.")
+                        st.rerun()
+                    else:
+                        st.error("Paste a session string first.")
 
     with col2:
         st.subheader("Discord")
+        dc = DiscordService(settings.discord_bot_token)
         if not dc.configured():
             st.warning("Set DISCORD_BOT_TOKEN in the environment.")
         else:
@@ -129,15 +193,25 @@ def page_connect(settings, tg: TelegramService, dc: DiscordService) -> None:
             )
 
 
-def page_targets(settings, tg: TelegramService, dc: DiscordService, store: Storage) -> None:
+def page_targets(settings, store: Storage, profile: ProfileRow | None) -> None:
     st.header("Targets")
+    if not profile:
+        st.info("Add a Telegram profile on the Connect page first.")
+        return
+
+    tg = _telegram_service(settings, profile)
+    dc = DiscordService(settings.discord_bot_token)
+
     st.caption(
-        "Telegram: every group/supergroup on the account is messaged on Broadcast "
-        "(DMs and broadcast channels are ignored). Auto-deleted and Stars-gated groups "
-        "are blacklisted and skipped on later runs."
+        "Telegram: every group/supergroup on this profile's account is messaged on "
+        "Broadcast (DMs and broadcast channels are ignored). Auto-deleted and Stars-gated "
+        "groups are blacklisted and skipped on later runs."
     )
 
-    skips = store.get_telegram_skips()
+    skips = store.get_telegram_skips(profile.id)
+    tg_key = f"tg_targets_{profile.id}"
+    dc_key = f"dc_targets_{profile.id}"
+
     c1, c2 = st.columns(2)
     with c1:
         st.subheader("Telegram")
@@ -145,7 +219,7 @@ def page_targets(settings, tg: TelegramService, dc: DiscordService, store: Stora
             try:
                 with st.spinner("Loading groups…"):
                     tg_list = _run(tg.list_groups(skip_ids=set(skips.keys())))
-                st.session_state["tg_targets"] = [
+                st.session_state[tg_key] = [
                     {
                         "id": t.id,
                         "name": f"{t.name} [{t.kind}]",
@@ -156,7 +230,7 @@ def page_targets(settings, tg: TelegramService, dc: DiscordService, store: Stora
                 ]
             except Exception as exc:
                 st.error(str(exc))
-        tg_targets = st.session_state.get("tg_targets", [])
+        tg_targets = st.session_state.get(tg_key, [])
         if tg_targets:
             st.write(f"**{len(tg_targets)}** groups will be messaged (excluding blacklist).")
             st.dataframe(
@@ -172,7 +246,7 @@ def page_targets(settings, tg: TelegramService, dc: DiscordService, store: Stora
                 height=280,
             )
         else:
-            st.info("Click Preview to see every group on the account.")
+            st.info("Click Preview to see every group on this profile's account.")
 
         st.subheader("Blacklisted Telegram groups")
         if skips:
@@ -190,39 +264,75 @@ def page_targets(settings, tg: TelegramService, dc: DiscordService, store: Stora
                 height=220,
             )
             restore_id = st.selectbox(
-                "Restore a group from blacklist",
+                "Pick a blacklisted group",
                 options=[""] + list(skips.keys()),
                 format_func=lambda i: "(pick…)" if not i else skips[i].get("name", i),
             )
-            cols = st.columns(2)
+            cols = st.columns(3)
             if cols[0].button("Restore selected") and restore_id:
-                store.remove_telegram_skip(restore_id)
+                store.remove_telegram_skip(profile.id, restore_id)
                 st.success("Restored — will be included on next broadcast.")
                 st.rerun()
-            if cols[1].button("Clear entire blacklist"):
-                store.clear_telegram_skips()
+            if cols[1].button("Leave selected") and restore_id:
+                with st.spinner("Leaving group…"):
+                    result = _run(
+                        tg.leave_groups(
+                            [{"id": restore_id, "name": skips[restore_id].get("name", restore_id)}]
+                        )
+                    )[0]
+                if result.status == "left":
+                    store.remove_telegram_skip(profile.id, restore_id)
+                    st.success(f"Left {result.target_name}.")
+                else:
+                    st.error(f"Failed to leave: {result.detail}")
+                st.rerun()
+            if cols[2].button("Clear entire blacklist"):
+                store.clear_telegram_skips(profile.id)
                 st.success("Blacklist cleared.")
+                st.rerun()
+
+            st.caption(
+                "Leaving removes the account from the group entirely (not just skipping "
+                "future broadcasts) — you'd need to be re-invited to rejoin."
+            )
+            if st.button(f"Leave all {len(skips)} blacklisted group(s)", type="primary"):
+                targets = [
+                    {"id": k, "name": v.get("name", k)} for k, v in skips.items()
+                ]
+                with st.spinner(f"Leaving {len(targets)} group(s)…"):
+                    results = _run(tg.leave_groups(targets))
+                left = [r for r in results if r.status == "left"]
+                failed = [r for r in results if r.status != "left"]
+                for r in left:
+                    store.remove_telegram_skip(profile.id, r.target_id)
+                st.success(f"Left {len(left)} group(s).")
+                if failed:
+                    st.warning(f"{len(failed)} could not be left — still blacklisted.")
+                    st.dataframe(
+                        [{"name": r.target_name, "detail": r.detail} for r in failed],
+                        use_container_width=True,
+                    )
                 st.rerun()
         else:
             st.caption("No blacklisted groups yet.")
 
     with c2:
         st.subheader("Discord channels (optional)")
-        selected = store.get_selected_targets()
+        selected = store.get_selected_discord_channels(profile.id)
         if st.button("Refresh Discord"):
             try:
                 with st.spinner("Loading Discord channels..."):
                     dc_list = _run(dc.list_text_channels())
-                st.session_state["dc_targets"] = [
+                st.session_state[dc_key] = [
                     {"id": t.id, "name": t.name, "raw_name": t.name}
                     for t in dc_list
                 ]
             except Exception as exc:
                 st.error(str(exc))
-        dc_targets = st.session_state.get("dc_targets", [])
+        dc_targets = st.session_state.get(dc_key, [])
         if dc_targets:
             labels = {t["id"]: t["name"] for t in dc_targets}
-            default = [i for i in selected["discord"] if i in labels]
+            default = [i for i in selected if i in labels]
             picked_dc = st.multiselect(
                 "Select Discord channels",
                 options=list(labels.keys()),
@@ -230,15 +340,15 @@ def page_targets(settings, tg: TelegramService, dc: DiscordService, store: Stora
                 format_func=lambda i: labels.get(i, i),
             )
         else:
-            picked_dc = selected["discord"]
+            picked_dc = selected
             st.info("Click Refresh Discord to load channels the bot can post in.")
 
         if st.button("Save Discord selection", type="primary"):
-            store.set_selected_targets([], picked_dc)
+            store.set_selected_discord_channels(profile.id, picked_dc)
             st.success(f"Saved {len(picked_dc)} Discord channel(s).")
 
 
-def _render_job_panel(store: Storage, job: JobRow, runner) -> None:
+def _render_job_panel(store: Storage, job: JobRow, runner, profile: ProfileRow) -> None:
     total = max(job.total, 1)
     frac = min(job.done / total, 1.0) if job.total else 0.0
     if job.status in {"completed", "failed", "cancelled"}:
@@ -255,16 +365,14 @@ def _render_job_panel(store: Storage, job: JobRow, runner) -> None:
     if job.status in {"queued", "running", "interrupted"}:
         cols = st.columns(2)
         if cols[0].button("Cancel broadcast", key=f"cancel_{job.id}"):
-            runner.request_cancel()
+            runner.request_cancel(profile.id)
             store.update_job(job.id, current_detail="Cancel requested…")
             st.warning("Cancel requested — finishes the current group, then stops.")
         if job.status == "interrupted" and cols[1].button(
             "Resume now", key=f"resume_{job.id}"
         ):
-            settings = get_settings()
-            session = st.session_state.get("telegram_session") or settings.telegram_session
             try:
-                runner.resume_interrupted(store, session)
+                runner.resume_interrupted(profile.id, store, profile.telegram_session)
                 st.success("Resume started")
                 st.rerun()
             except Exception as exc:
@@ -296,19 +404,22 @@ def _render_job_panel(store: Storage, job: JobRow, runner) -> None:
         )
 
 
-def page_progress(store: Storage) -> None:
+def page_progress(store: Storage, profile: ProfileRow | None) -> None:
     st.header("Broadcast progress")
+    if not profile:
+        st.info("Add a Telegram profile on the Connect page first.")
+        return
     st.caption(
-        "Jobs run in the background on the server. You can switch pages, reload, "
-        "or open this URL on another device — progress is shared from the database."
+        "Jobs run in the background on the server for this profile. You can switch pages, "
+        "reload, or open this URL on another device — progress is shared from the database."
     )
     runner = get_job_runner()
-    job = store.get_active_job() or store.get_latest_job()
+    job = store.get_active_job(profile.id) or store.get_latest_job(profile.id)
     if not job:
-        st.info("No broadcast jobs yet. Start one from Compose.")
+        st.info("No broadcast jobs yet for this profile. Start one from Compose.")
         return
 
-    _render_job_panel(store, job, runner)
+    _render_job_panel(store, job, runner, profile)
 
     if job.status in {"queued", "running"}:
         st.caption("Auto-refreshing every 2 seconds…")
@@ -316,20 +427,24 @@ def page_progress(store: Storage) -> None:
         st.rerun()
 
 
-def page_compose(settings, tg: TelegramService, dc: DiscordService, store: Storage) -> None:
+def page_compose(settings, store: Storage, profile: ProfileRow | None) -> None:
     st.header("Compose & broadcast")
+    if not profile:
+        st.info("Add a Telegram profile on the Connect page first.")
+        return
+
     runner = get_job_runner()
-    skips = store.get_telegram_skips()
-    selected = store.get_selected_targets()
-    active = store.get_active_job()
+    skips = store.get_telegram_skips(profile.id)
+    selected = store.get_selected_discord_channels(profile.id)
+    active = store.get_active_job(profile.id)
 
     st.info(
-        "Broadcast runs as a **background job** on the server. Leaving this page, "
-        "reloading, or opening another device will not stop it — watch Progress."
+        "Broadcast runs as a **background job** on the server for this profile. Leaving "
+        "this page, reloading, or opening another device will not stop it — watch Progress."
     )
     st.write(
         f"Blacklisted Telegram groups: **{len(skips)}** · "
-        f"Discord channels selected: **{len(selected['discord'])}**"
+        f"Discord channels selected: **{len(selected)}**"
     )
 
     if active:
@@ -338,30 +453,27 @@ def page_compose(settings, tg: TelegramService, dc: DiscordService, store: Stora
             f"({active.done}/{active.total or '?'}). "
             "Start is disabled until it finishes or you cancel it."
         )
-        _render_job_panel(store, active, runner)
+        _render_job_panel(store, active, runner, profile)
         if active.status in {"queued", "running"}:
             time.sleep(2)
             st.rerun()
         return
 
-    latest = store.get_latest_job()
+    latest = store.get_latest_job(profile.id)
     if latest and latest.status in {"completed", "failed", "cancelled", "interrupted"}:
         with st.expander(f"Last job #{latest.id} ({latest.status})", expanded=False):
-            _render_job_panel(store, latest, runner)
+            _render_job_panel(store, latest, runner, profile)
             if latest.status == "interrupted":
                 if st.button("Resume interrupted job"):
-                    session = (
-                        st.session_state.get("telegram_session") or settings.telegram_session
-                    )
                     try:
-                        runner.resume_interrupted(store, session)
+                        runner.resume_interrupted(profile.id, store, profile.telegram_session)
                         st.rerun()
                     except Exception as exc:
                         st.error(str(exc))
 
     message = st.text_area(
         "Message",
-        value=store.get_draft_message(),
+        value=profile.draft_message,
         height=200,
         placeholder="Your marketing message…",
     )
@@ -382,29 +494,29 @@ def page_compose(settings, tg: TelegramService, dc: DiscordService, store: Stora
     )
     include_discord = st.checkbox(
         "Also send to selected Discord channels after Telegram finishes",
-        value=bool(selected["discord"]),
+        value=bool(selected),
     )
 
     if st.button("Save draft"):
-        store.set_draft_message(message)
+        store.set_draft_message(profile.id, message)
         st.success("Draft saved")
 
-    can_start = bool(message.strip() and tg.has_session())
+    can_start = bool(message.strip() and profile.telegram_session)
     if st.button(
         "Start background broadcast to all Telegram groups",
         type="primary",
         disabled=not can_start,
     ):
-        store.set_draft_message(message)
-        session = st.session_state.get("telegram_session") or settings.telegram_session
+        store.set_draft_message(profile.id, message)
         try:
             job_id = runner.start_broadcast(
+                profile_id=profile.id,
                 store=store,
                 message=message,
                 delay_seconds=float(delay),
                 max_slowmode_wait=int(max_slowmode),
                 include_discord=bool(include_discord),
-                telegram_session=session,
+                telegram_session=profile.telegram_session,
             )
             st.success(f"Started background job #{job_id}. Open Progress anytime.")
             st.rerun()
@@ -412,9 +524,12 @@ def page_compose(settings, tg: TelegramService, dc: DiscordService, store: Stora
             st.error(str(exc))
 
 
-def page_log(store: Storage) -> None:
+def page_log(store: Storage, profile: ProfileRow | None) -> None:
     st.header("Send log")
-    rows = store.list_send_logs(150)
+    if not profile:
+        st.info("Add a Telegram profile on the Connect page first.")
+        return
+    rows = store.list_send_logs(profile.id, 150)
     if not rows:
         st.info("No sends yet.")
         return
@@ -435,43 +550,77 @@ def page_log(store: Storage) -> None:
 
 def main() -> None:
     st.set_page_config(page_title="Group Forwarder", page_icon="📣", layout="wide")
-    settings, tg, dc, store = _services()
-    runner = get_job_runner()
-    session = st.session_state.get("telegram_session") or settings.telegram_session
-    runner.ensure_started(store, session)
+    settings = get_settings()
+    store = Storage(settings.database_url)
+    bootstrap_admin(store, settings)
 
-    if not _gate(settings.owner_password):
+    runner = get_job_runner()
+    runner.ensure_started(store)
+
+    if not _require_auth(store):
         return
 
-    active = store.get_active_job()
+    profile = _ensure_active_profile(store)
+
     st.sidebar.title("Group Forwarder")
-    if active:
-        st.sidebar.success(
-            f"Job #{active.id} {active.status}: {active.done}/{active.total or '?'}"
+    st.sidebar.caption(f"Signed in as {st.session_state.get('user_email')}")
+
+    profiles = _profiles_for_current_user(store)
+    if profiles:
+        options = {p.id: p.label for p in profiles}
+        current = profile.id if profile else profiles[0].id
+        chosen = st.sidebar.selectbox(
+            "Active profile",
+            options=list(options.keys()),
+            index=list(options.keys()).index(current),
+            format_func=lambda i: options[i],
+            key="sidebar_profile_select",
         )
-    page = st.sidebar.radio(
-        "Page", ["Connect", "Targets", "Compose", "Progress", "Log"]
-    )
+        if chosen != st.session_state.get("active_profile_id"):
+            st.session_state["active_profile_id"] = chosen
+            st.rerun()
+        profile = store.get_profile(chosen)
+    else:
+        st.sidebar.caption("No profiles yet — add one on the Connect page.")
+
+    if profile:
+        active = store.get_active_job(profile.id)
+        if active:
+            st.sidebar.success(
+                f"Job #{active.id} {active.status}: {active.done}/{active.total or '?'}"
+            )
+
+    pages = ["Connect", "Targets", "Compose", "Progress", "Log"]
+    if st.session_state.get("role") == "admin":
+        pages.append("Admin")
+    page = st.sidebar.radio("Page", pages)
+
     st.sidebar.caption(
         "Only post in groups/servers where you have permission. "
         "Mass spam can get accounts banned."
     )
-    st.sidebar.caption(f"Data: {settings.db_path}")
     st.sidebar.caption(
         "Note: Railway free tier sleeps the app when idle — a sleeping "
         "container pauses jobs until someone opens the site again (then it resumes)."
     )
 
+    if st.sidebar.button("Log out"):
+        for key in ("user_id", "role", "user_email", "must_change_password", "active_profile_id"):
+            st.session_state.pop(key, None)
+        st.rerun()
+
     if page == "Connect":
-        page_connect(settings, tg, dc)
+        page_connect(settings, store, profile)
     elif page == "Targets":
-        page_targets(settings, tg, dc, store)
+        page_targets(settings, store, profile)
     elif page == "Compose":
-        page_compose(settings, tg, dc, store)
+        page_compose(settings, store, profile)
     elif page == "Progress":
-        page_progress(store)
+        page_progress(store, profile)
+    elif page == "Log":
+        page_log(store, profile)
     else:
-        page_log(store)
+        page_admin(store)
 
 
 main()
