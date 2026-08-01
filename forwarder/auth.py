@@ -27,10 +27,29 @@ def authenticate(store: Storage, email: str, password: str) -> UserRow | None:
 
 
 def bootstrap_admin(store: Storage, settings: Settings) -> None:
-    """Idempotent: create the first admin from env vars if none exists yet."""
-    if store.count_admins() > 0:
-        return
+    """Idempotent: create the first admin from env vars if none exists yet.
+
+    ADMIN_INITIAL_PASSWORD is only consumed on that first creation. If the
+    account is later locked out (password lost, account deactivated), set
+    ADMIN_FORCE_PASSWORD_RESET=true alongside ADMIN_EMAIL/ADMIN_INITIAL_PASSWORD
+    to reissue it on next boot, then unset it again.
+    """
     if not settings.admin_email or not settings.admin_initial_password:
+        return
+
+    existing = store.get_user_by_email(settings.admin_email)
+    if existing:
+        if settings.admin_force_password_reset:
+            store.set_user_password(
+                existing.id,
+                hash_password(settings.admin_initial_password),
+                must_change_password=True,
+            )
+            if not existing.is_active:
+                store.set_user_active(existing.id, True)
+        return
+
+    if store.count_admins() > 0:
         return
     store.create_user(
         email=settings.admin_email,
