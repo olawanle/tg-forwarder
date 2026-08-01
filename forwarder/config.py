@@ -18,6 +18,7 @@ class Settings:
     session_encryption_key: str
     admin_email: str
     admin_initial_password: str
+    admin_force_password_reset: bool
     max_targets_per_run: int
     default_delay_seconds: float
 
@@ -35,6 +36,10 @@ class Settings:
             session_encryption_key=os.getenv("SESSION_ENCRYPTION_KEY", "").strip(),
             admin_email=os.getenv("ADMIN_EMAIL", "").strip().lower(),
             admin_initial_password=os.getenv("ADMIN_INITIAL_PASSWORD", "").strip(),
+            admin_force_password_reset=os.getenv(
+                "ADMIN_FORCE_PASSWORD_RESET", ""
+            ).strip().lower()
+            in ("1", "true", "yes"),
             max_targets_per_run=int(os.getenv("MAX_TARGETS_PER_RUN", "50")),
             default_delay_seconds=float(os.getenv("DEFAULT_DELAY_SECONDS", "8")),
         )

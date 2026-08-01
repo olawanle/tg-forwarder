@@ -96,6 +96,21 @@ can access the Telegram account. It's stored encrypted in the database, never in
 7. Open the URL → log in as the admin → **Admin** page → create accounts for your friends →
    each person adds their own profile(s) from **Connect**.
 
+### Locked out of the admin account
+
+`ADMIN_INITIAL_PASSWORD` is only read once, the moment the admin row is first
+created — changing it afterwards does nothing on its own. If you lose that
+password or the account gets deactivated:
+
+1. In Railway → forwarder service → Variables, set `ADMIN_INITIAL_PASSWORD` to
+   the new password you want and add `ADMIN_FORCE_PASSWORD_RESET=true`.
+2. Redeploy (or wait for the restart). On boot the app reissues the admin's
+   password to that value, reactivates the account if needed, and forces a
+   password change on next login.
+3. Log in with `ADMIN_EMAIL` + the new password, then **remove**
+   `ADMIN_FORCE_PASSWORD_RESET`  (or set it back to `false`) so the reset
+   doesn't reapply on every future boot.
+
 ### Fixing Bad Gateway / port errors
 
 | Symptom | Fix |
