@@ -60,6 +60,8 @@ class ProfileRow:
     telegram_api_id: int | None
     telegram_api_hash: str | None
     draft_message: str
+    draft_saved_message_id: int | None
+    draft_mode: str
     created_at: str
     updated_at: str
 
@@ -84,6 +86,7 @@ class JobRow:
     updated_at: str
     status: str
     message: str
+    source_message_id: int | None
     delay_seconds: float
     max_slowmode_wait: int
     include_discord: bool
@@ -216,6 +219,15 @@ class Storage:
                 );
                 """
             )
+            # Added after the initial deploy — ALTER ... IF NOT EXISTS keeps
+            # this idempotent for both fresh and already-provisioned databases.
+            cur.execute(
+                """
+                ALTER TABLE profiles ADD COLUMN IF NOT EXISTS draft_saved_message_id BIGINT;
+                ALTER TABLE profiles ADD COLUMN IF NOT EXISTS draft_mode TEXT NOT NULL DEFAULT 'text';
+                ALTER TABLE jobs ADD COLUMN IF NOT EXISTS source_message_id BIGINT;
+                """
+            )
 
     # ---------------------------------------------------------------- users
 
@@ -322,6 +334,8 @@ class Storage:
             telegram_api_id=row["telegram_api_id"],
             telegram_api_hash=row["telegram_api_hash"],
             draft_message=row["draft_message"] or "",
+            draft_saved_message_id=row["draft_saved_message_id"],
+            draft_mode=row["draft_mode"] or "text",
             created_at=str(row["created_at"]),
             updated_at=str(row["updated_at"]),
         )
@@ -356,8 +370,23 @@ class Storage:
     def set_draft_message(self, profile_id: int, message: str) -> None:
         with self._conn() as conn, conn.cursor() as cur:
             cur.execute(
-                "UPDATE profiles SET draft_message = %s, updated_at = now() WHERE id = %s",
+                """
+                UPDATE profiles
+                SET draft_message = %s, draft_mode = 'text', updated_at = now()
+                WHERE id = %s
+                """,
                 (message, profile_id),
+            )
+
+    def set_draft_saved_message(self, profile_id: int, saved_message_id: int) -> None:
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE profiles
+                SET draft_saved_message_id = %s, draft_mode = 'saved', updated_at = now()
+                WHERE id = %s
+                """,
+                (saved_message_id, profile_id),
             )
 
     # --------------------------------------------------------- skip / block
@@ -492,6 +521,7 @@ class Storage:
             updated_at=str(row["updated_at"]),
             status=row["status"],
             message=row["message"],
+            source_message_id=row["source_message_id"],
             delay_seconds=float(row["delay_seconds"]),
             max_slowmode_wait=int(row["max_slowmode_wait"]),
             include_discord=bool(row["include_discord"]),
@@ -511,20 +541,22 @@ class Storage:
         delay_seconds: float,
         max_slowmode_wait: int,
         include_discord: bool,
+        source_message_id: int | None = None,
     ) -> int:
         with self._conn() as conn, conn.cursor() as cur:
             cur.execute(
                 """
                 INSERT INTO jobs(
-                    profile_id, status, message, delay_seconds,
+                    profile_id, status, message, source_message_id, delay_seconds,
                     max_slowmode_wait, include_discord, total, done,
                     current_name, current_detail, error, pending_json, summary_json
-                ) VALUES (%s, 'queued', %s, %s, %s, %s, 0, 0, '', 'Queued', '', '[]', '{}')
+                ) VALUES (%s, 'queued', %s, %s, %s, %s, %s, 0, 0, '', 'Queued', '', '[]', '{}')
                 RETURNING id
                 """,
                 (
                     profile_id,
                     message,
+                    source_message_id,
                     delay_seconds,
                     max_slowmode_wait,
                     include_discord,

@@ -400,36 +400,9 @@ def page_targets(settings, store: Storage, profile: ProfileRow | None) -> None:
                 use_container_width=True,
                 height=220,
             )
-            restore_id = st.selectbox(
-                "Pick a blacklisted group",
-                options=[""] + list(skips.keys()),
-                format_func=lambda i: "(pick…)" if not i else skips[i].get("name", i),
-            )
-            cols = st.columns(3)
-            if cols[0].button("Restore selected") and restore_id:
-                store.remove_telegram_skip(profile.id, restore_id)
-                st.success("Restored — will be included on next broadcast.")
-                st.rerun()
-            if cols[1].button("Leave selected") and restore_id:
-                with st.spinner("Leaving group…"):
-                    result = _run(
-                        tg.leave_groups(
-                            [{"id": restore_id, "name": skips[restore_id].get("name", restore_id)}]
-                        )
-                    )[0]
-                if result.status == "left":
-                    store.remove_telegram_skip(profile.id, restore_id)
-                    st.success(f"Left {result.target_name}.")
-                else:
-                    st.error(f"Failed to leave: {result.detail}")
-                st.rerun()
-            if cols[2].button("Clear entire blacklist"):
-                store.clear_telegram_skips(profile.id)
-                st.success("Blacklist cleared.")
-                st.rerun()
 
             st.caption(
-                "Leaving removes the account from the group entirely (not just skipping "
+                "Leaving removes the account from a group entirely (not just skipping "
                 "future broadcasts) — you'd need to be re-invited to rejoin."
             )
             if st.button(f"Leave all {len(skips)} blacklisted group(s)", type="primary"):
@@ -450,6 +423,35 @@ def page_targets(settings, store: Storage, profile: ProfileRow | None) -> None:
                         use_container_width=True,
                     )
                 st.rerun()
+
+            with st.expander("Manage one group at a time"):
+                restore_id = st.selectbox(
+                    "Pick a blacklisted group",
+                    options=[""] + list(skips.keys()),
+                    format_func=lambda i: "(pick…)" if not i else skips[i].get("name", i),
+                )
+                cols = st.columns(3)
+                if cols[0].button("Restore selected") and restore_id:
+                    store.remove_telegram_skip(profile.id, restore_id)
+                    st.success("Restored — will be included on next broadcast.")
+                    st.rerun()
+                if cols[1].button("Leave selected") and restore_id:
+                    with st.spinner("Leaving group…"):
+                        result = _run(
+                            tg.leave_groups(
+                                [{"id": restore_id, "name": skips[restore_id].get("name", restore_id)}]
+                            )
+                        )[0]
+                    if result.status == "left":
+                        store.remove_telegram_skip(profile.id, restore_id)
+                        st.success(f"Left {result.target_name}.")
+                    else:
+                        st.error(f"Failed to leave: {result.detail}")
+                    st.rerun()
+                if cols[2].button("Clear entire blacklist"):
+                    store.clear_telegram_skips(profile.id)
+                    st.success("Blacklist cleared.")
+                    st.rerun()
         else:
             st.caption("No blacklisted groups yet.")
 
@@ -608,12 +610,77 @@ def page_compose(settings, store: Storage, profile: ProfileRow | None) -> None:
                     except Exception as exc:
                         st.error(str(exc))
 
-    message = st.text_area(
-        "Message",
-        value=profile.draft_message,
-        height=200,
-        placeholder="Your marketing message…",
+    mode_label = st.radio(
+        "Send from",
+        ["Typed message", "A tagged Saved Message"],
+        index=1 if profile.draft_mode == "saved" else 0,
+        horizontal=True,
+        help=(
+            "Saved Message mode forwards a message you wrote and reacted to in "
+            "Telegram's own Saved Messages, so formatting/emoji/media survive exactly — "
+            "nothing round-trips through plain text."
+        ),
     )
+
+    message = ""
+    source_message_id: int | None = None
+
+    if mode_label == "Typed message":
+        message = st.text_area(
+            "Message",
+            value=profile.draft_message,
+            height=200,
+            placeholder="Your marketing message…",
+        )
+        st.caption(
+            "Formatting: type `**bold**`, `__italic__`, `` `code` `` or `[text](url)` and "
+            "Telegram will render it properly when sent — this box works like Telegram's own "
+            "markdown. What it **can't** do: preserve bold/emoji you copy-pasted from an "
+            "existing Telegram message. Native bold and Premium custom emoji aren't stored as "
+            "text at all (Telegram keeps them as separate formatting/emoji-ID data attached to "
+            "the message), so pasting into any plain text box — this one included — silently "
+            "drops them and any custom emoji falls back to a plain character. Retype formatting "
+            "with the markdown syntax above, and use regular Unicode emoji (🔥📌✅ etc., not "
+            "Premium ones) if you want them to survive — or switch to Saved Message mode above."
+        )
+    else:
+        tg = _telegram_service(settings, profile)
+        st.caption(
+            "In Telegram, open **Saved Messages**, write your message there with full "
+            "formatting and emoji, then react to it with any emoji — that reaction becomes "
+            "its tag. Refresh below to load tagged messages, then pick one. Sending this way "
+            "requires **Telegram Premium on this profile's account** to drop the "
+            "\"Forwarded from\" label; without Premium the broadcast still works but shows "
+            "that label in every group."
+        )
+        saved_key = f"saved_msgs_{profile.id}"
+        if st.button("Refresh tagged Saved Messages"):
+            try:
+                with st.spinner("Loading Saved Messages…"):
+                    st.session_state[saved_key] = _run(tg.list_tagged_saved_messages())
+            except Exception as exc:
+                st.error(str(exc))
+        options = st.session_state.get(saved_key, [])
+        if options:
+            labels = {o.id: f"{o.tag}  {o.preview}" for o in options}
+            ids = list(labels.keys())
+            default_id = (
+                profile.draft_saved_message_id
+                if profile.draft_saved_message_id in labels
+                else ids[0]
+            )
+            source_message_id = st.selectbox(
+                "Pick the tagged message to broadcast",
+                options=ids,
+                index=ids.index(default_id),
+                format_func=lambda i: labels[i],
+            )
+        else:
+            st.info(
+                "No tagged Saved Messages found yet — react to one in Telegram, then "
+                "click Refresh."
+            )
+
     delay = st.slider(
         "Delay between sends (seconds)",
         min_value=3.0,
@@ -634,17 +701,26 @@ def page_compose(settings, store: Storage, profile: ProfileRow | None) -> None:
         value=bool(selected),
     )
 
-    if st.button("Save draft"):
-        store.set_draft_message(profile.id, message)
-        st.success("Draft saved")
+    if mode_label == "Typed message":
+        if st.button("Save draft"):
+            store.set_draft_message(profile.id, message)
+            st.success("Draft saved")
+        can_start = bool(message.strip() and profile.telegram_session)
+    else:
+        if st.button("Save draft") and source_message_id:
+            store.set_draft_saved_message(profile.id, source_message_id)
+            st.success("Draft saved")
+        can_start = bool(source_message_id and profile.telegram_session)
 
-    can_start = bool(message.strip() and profile.telegram_session)
     if st.button(
         "Start background broadcast to all Telegram groups",
         type="primary",
         disabled=not can_start,
     ):
-        store.set_draft_message(profile.id, message)
+        if mode_label == "Typed message":
+            store.set_draft_message(profile.id, message)
+        else:
+            store.set_draft_saved_message(profile.id, source_message_id)
         try:
             job_id = runner.start_broadcast(
                 profile_id=profile.id,
@@ -654,6 +730,7 @@ def page_compose(settings, store: Storage, profile: ProfileRow | None) -> None:
                 max_slowmode_wait=int(max_slowmode),
                 include_discord=bool(include_discord),
                 telegram_session=profile.telegram_session,
+                source_message_id=source_message_id,
             )
             st.success(f"Started background job #{job_id}. Open Progress anytime.")
             st.rerun()

@@ -67,6 +67,7 @@ class JobRunner:
         max_slowmode_wait: int,
         include_discord: bool,
         telegram_session: str,
+        source_message_id: int | None = None,
     ) -> int:
         with self._lock:
             if self.is_worker_alive(profile_id):
@@ -81,6 +82,7 @@ class JobRunner:
                 delay_seconds=delay_seconds,
                 max_slowmode_wait=max_slowmode_wait,
                 include_discord=include_discord,
+                source_message_id=source_message_id,
             )
             stop = threading.Event()
             thread = threading.Thread(
@@ -204,6 +206,7 @@ class JobRunner:
             delay = float(job.delay_seconds)
             max_slow = int(job.max_slowmode_wait)
             message = job.message
+            source_message_id = job.source_message_id
 
             while True:
                 if stop.is_set():
@@ -240,6 +243,7 @@ class JobRunner:
                             str(name),
                             max_slowmode_wait=max_slow,
                             verify_seconds=1.5,
+                            source_message_id=source_message_id,
                         )
                     )
                 except Exception as exc:

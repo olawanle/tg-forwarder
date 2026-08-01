@@ -14,7 +14,7 @@ from telethon.errors import (
     UserBannedInChannelError,
 )
 from telethon.sessions import StringSession
-from telethon.tl.types import Channel, Chat, MessageEmpty
+from telethon.tl.types import Channel, Chat, MessageEmpty, ReactionEmoji
 
 
 @dataclass
@@ -32,6 +32,32 @@ class SendResult:
     target_name: str
     status: str
     detail: str = ""
+
+
+@dataclass
+class SavedMessageOption:
+    id: int
+    tag: str
+    preview: str
+    has_media: bool
+
+
+def _reaction_tag(msg) -> str | None:
+    """Telegram's own 'Saved Messages tags' feature: reactions on a saved
+    message double as searchable tags. Returns a printable tag string, or
+    None if the message has no reactions at all."""
+    reactions = getattr(msg, "reactions", None)
+    results = getattr(reactions, "results", None) if reactions else None
+    if not results:
+        return None
+    parts = []
+    for r in results:
+        reaction = getattr(r, "reaction", None)
+        if isinstance(reaction, ReactionEmoji):
+            parts.append(reaction.emoticon)
+        else:
+            parts.append("\U0001F3F7️")  # generic tag icon for custom/premium emoji reactions
+    return " ".join(parts) if parts else None
 
 
 _STARS_HINT = re.compile(
@@ -160,6 +186,35 @@ class TelegramService:
         finally:
             await client.disconnect()
 
+    async def list_tagged_saved_messages(self, limit: int = 200) -> list[SavedMessageOption]:
+        """Saved Messages entries the account has reacted to — Telegram's own
+        'tags' feature. Broadcasting from one of these preserves native
+        formatting and media exactly, since nothing is round-tripped through
+        plain text."""
+        client = self._client()
+        options: list[SavedMessageOption] = []
+        try:
+            await client.connect()
+            if not await client.is_user_authorized():
+                raise RuntimeError("Telegram session is not authorized")
+            async for msg in client.iter_messages("me", limit=limit):
+                tag = _reaction_tag(msg)
+                if not tag:
+                    continue
+                text = (msg.message or "").strip().replace("\n", " ")
+                if len(text) > 90:
+                    text = text[:90] + "…"
+                if not text:
+                    text = "[media]" if msg.media else "(empty message)"
+                options.append(
+                    SavedMessageOption(
+                        id=msg.id, tag=tag, preview=text, has_media=bool(msg.media)
+                    )
+                )
+            return options
+        finally:
+            await client.disconnect()
+
     @staticmethod
     def _is_deleted_response(msg, exc: Exception | None = None) -> bool:
         if isinstance(msg, MessageEmpty):
@@ -188,6 +243,7 @@ class TelegramService:
         message: str,
         max_slowmode_wait: int,
         verify_seconds: float = 1.5,
+        source_message_id: int | None = None,
     ) -> SendResult:
         peer = int(target_id)
         try:
@@ -205,6 +261,17 @@ class TelegramService:
             )
 
         async def do_send():
+            if source_message_id is not None:
+                # Forward from Saved Messages without the "Forwarded from" tag,
+                # so formatting/media/custom emoji are preserved natively —
+                # requires Telegram Premium on the sending account.
+                sent = await asyncio.wait_for(
+                    client.forward_messages(
+                        entity, source_message_id, from_peer="me", drop_author=True
+                    ),
+                    timeout=60,
+                )
+                return sent[0] if isinstance(sent, list) else sent
             return await asyncio.wait_for(client.send_message(entity, message), timeout=60)
 
         async def verify_kept(msg) -> bool:
@@ -406,9 +473,13 @@ class TelegramService:
         name: str,
         max_slowmode_wait: int = 300,
         verify_seconds: float = 1.5,
+        source_message_id: int | None = None,
     ) -> SendResult:
-        """Connect, send to one group, disconnect. Used for live Streamlit progress."""
-        if not message.strip():
+        """Connect, send to one group, disconnect. Used for live Streamlit progress.
+
+        If source_message_id is given, forwards that Saved Messages entry
+        instead of sending `message` as plain text (message may be empty)."""
+        if source_message_id is None and not message.strip():
             raise ValueError("Message is empty")
         client = self._client()
         try:
@@ -422,6 +493,7 @@ class TelegramService:
                 message,
                 max_slowmode_wait=max_slowmode_wait,
                 verify_seconds=verify_seconds,
+                source_message_id=source_message_id,
             )
         finally:
             await client.disconnect()
