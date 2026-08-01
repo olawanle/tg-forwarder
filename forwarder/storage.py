@@ -19,6 +19,15 @@ from forwarder import crypto
 _POOLS: dict[str, pg_pool.ThreadedConnectionPool] = {}
 _POOLS_LOCK = threading.Lock()
 
+# _init_db()'s DDL (CREATE TABLE/INDEX IF NOT EXISTS, ALTER TABLE ADD COLUMN
+# IF NOT EXISTS) takes a real lock even when it ends up a no-op. Storage() is
+# constructed on every Streamlit rerun and every background job thread, so
+# without this guard, concurrent Storage() calls race on the same DDL and can
+# deadlock in Postgres (seen in production: psycopg2.errors.DeadlockDetected
+# on AccessExclusiveLock during _init_db). Run it once per process instead.
+_SCHEMA_READY: set[str] = set()
+_SCHEMA_LOCK = threading.Lock()
+
 
 def _get_pool(database_url: str) -> pg_pool.ThreadedConnectionPool:
     if database_url not in _POOLS:
@@ -116,7 +125,11 @@ class Storage:
         if not database_url:
             raise RuntimeError("DATABASE_URL is not set")
         self._pool = _get_pool(database_url)
-        self._init_db()
+        if database_url not in _SCHEMA_READY:
+            with _SCHEMA_LOCK:
+                if database_url not in _SCHEMA_READY:
+                    self._init_db()
+                    _SCHEMA_READY.add(database_url)
 
     @contextmanager
     def _conn(self) -> Iterator[psycopg2.extensions.connection]:
