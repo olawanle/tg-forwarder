@@ -1,14 +1,18 @@
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { GlassCard } from "../components/GlassCard";
 import { AvatarBadge } from "../components/Small";
 import { IconButton } from "../components/Small";
+import { Button } from "../components/Button";
 import { useAuth } from "../auth/AuthContext";
 import { useProfiles } from "../profile/ProfileContext";
+import { AddProfileWizard } from "./AddProfileWizard";
 
 export function Profiles() {
   const navigate = useNavigate();
   const { logout, user } = useAuth();
   const { profiles, activeProfile, setActiveProfileId, isLoading } = useProfiles();
+  const [wizardOpen, setWizardOpen] = useState(false);
 
   return (
     <div className="page page--no-nav">
@@ -88,11 +92,19 @@ export function Profiles() {
         ))
       )}
 
-      <GlassCard>
-        <div style={{ color: "var(--text3)", fontSize: 13.5, textAlign: "center", padding: "12px 0" }}>
-          Adding a profile (phone-login wizard, paste-session) lands in Phase 3.
-        </div>
-      </GlassCard>
+      <Button variant="outline" onClick={() => setWizardOpen(true)}>
+        + Add a Telegram profile
+      </Button>
+
+      {wizardOpen && (
+        <AddProfileWizard
+          onClose={() => setWizardOpen(false)}
+          onDone={(profileId) => {
+            setActiveProfileId(profileId);
+            setWizardOpen(false);
+          }}
+        />
+      )}
 
       {user?.role === "admin" && (
         <GlassCard onClick={() => navigate("/admin")}>

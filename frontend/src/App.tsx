@@ -10,7 +10,10 @@ import { SetPassword } from "./pages/SetPassword";
 import { Home } from "./pages/Home";
 import { Profiles } from "./pages/Profiles";
 import { Admin } from "./pages/Admin";
-import { PageStub } from "./pages/PageStub";
+import { Targets } from "./pages/Targets";
+import { Compose } from "./pages/Compose";
+import { Progress } from "./pages/Progress";
+import { Log } from "./pages/Log";
 
 const THEME_KEY = "forwarder_theme";
 
@@ -64,19 +67,10 @@ export default function App() {
 
               <Route element={<Shell />}>
                 <Route path="/home" element={<Home />} />
-                <Route
-                  path="/targets"
-                  element={<PageStub title="Targets" subtitle="Groups, blacklist, Discord." />}
-                />
-                <Route
-                  path="/compose"
-                  element={<PageStub title="Compose" subtitle="Write and broadcast." />}
-                />
-                <Route
-                  path="/progress"
-                  element={<PageStub title="Progress" subtitle="Live job status." />}
-                />
-                <Route path="/log" element={<PageStub title="Log" subtitle="Send history." />} />
+                <Route path="/targets" element={<Targets />} />
+                <Route path="/compose" element={<Compose />} />
+                <Route path="/progress" element={<Progress />} />
+                <Route path="/log" element={<Log />} />
               </Route>
             </Route>
 
