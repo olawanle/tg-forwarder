@@ -127,6 +127,7 @@ export function Progress() {
               { key: "ok", label: "Sent", bg: "var(--ok-soft)", fg: "var(--ok)" },
               { key: "skipped_stars", label: "Stars skipped", bg: "var(--warn-soft)", fg: "var(--warn)" },
               { key: "auto_deleted", label: "Auto-deleted", bg: "var(--warn-soft)", fg: "var(--warn)" },
+              { key: "other_skips", label: "Other skips", bg: "var(--warn-soft)", fg: "var(--warn)" },
               { key: "errors", label: "Errors", bg: "var(--bad-soft)", fg: "var(--bad)" },
             ].map((s) => (
               <div key={s.key} className="glass-card--soft" style={{ display: "flex", alignItems: "center", gap: 11, border: "1px solid var(--stroke)" }}>
@@ -195,11 +196,12 @@ export function Progress() {
             </div>
             {job.error && <div style={{ color: "var(--bad)", fontSize: 13 }}>{job.error}</div>}
             {job.summary && Object.keys(job.summary).length > 0 && (
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, width: "100%" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, width: "100%" }}>
                 {[
                   { key: "ok", label: "Sent", fg: "var(--ok)" },
                   { key: "skipped_stars", label: "Stars skipped", fg: "var(--warn)" },
                   { key: "auto_deleted", label: "Auto-deleted", fg: "var(--warn)" },
+                  { key: "other_skips", label: "Other skips", fg: "var(--warn)" },
                   { key: "errors", label: "Errors", fg: "var(--bad)" },
                 ].map((s) => (
                   <div key={s.key} className="glass-card--soft" style={{ textAlign: "center" }}>

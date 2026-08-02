@@ -23,6 +23,15 @@ export function Home() {
     refetchInterval: (q) => (q.state.data && ACTIVE_STATUSES.has(q.state.data.status) ? 3000 : false),
   });
 
+  // /jobs/active only returns queued|running jobs — once a broadcast
+  // finishes it goes null there, so fall back to the last job (same
+  // pattern Progress.tsx uses) instead of the card just disappearing.
+  const latestJob = useQuery({
+    queryKey: ["latest-job", profileId],
+    queryFn: () => api.get<Job | null>(`/profiles/${profileId}/jobs/latest`),
+    enabled: !!profileId && activeJob.data === null,
+  });
+
   const skips = useQuery({
     queryKey: ["skips", profileId],
     queryFn: () => api.get<Skip[]>(`/profiles/${profileId}/skips`),
@@ -41,7 +50,8 @@ export function Home() {
     enabled: !!profileId,
   });
 
-  const job = activeJob.data ?? null;
+  const job = activeJob.data ?? latestJob.data ?? null;
+  const isRunning = !!job && ACTIVE_STATUSES.has(job.status);
   const doneDisplay = job ? Math.min(job.done, job.total || job.done) : 0;
   const fraction = job?.total ? doneDisplay / job.total : 0;
   const firstName = user?.email.split("@")[0] ?? "there";
@@ -108,8 +118,12 @@ export function Home() {
               <MiniProgressRing fraction={fraction} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-                  <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--ok)", animation: "glassPulse 1.8s ease-in-out infinite" }} />
-                  <span style={{ fontSize: 13, fontWeight: 700, color: "var(--ok)", textTransform: "capitalize" }}>{job.status}</span>
+                  {isRunning && (
+                    <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--ok)", animation: "glassPulse 1.8s ease-in-out infinite" }} />
+                  )}
+                  <span style={{ fontSize: 13, fontWeight: 700, color: isRunning ? "var(--ok)" : "var(--text2)", textTransform: "capitalize" }}>
+                    {isRunning ? job.status : `Last broadcast · ${job.status}`}
+                  </span>
                 </div>
                 <div style={{ fontSize: 17, fontWeight: 800, letterSpacing: "-0.02em", marginTop: 3 }}>
                   Job #{job.id} · {doneDisplay} of {job.total || "?"}
