@@ -678,7 +678,7 @@ class Storage:
                 (job_id, platform, target_id, target_name, status, detail),
             )
 
-    def list_job_results(self, job_id: int, limit: int = 500) -> list[JobResultRow]:
+    def list_job_results(self, job_id: int, limit: int = 20000) -> list[JobResultRow]:
         with self._conn() as conn, conn.cursor() as cur:
             cur.execute(
                 """
