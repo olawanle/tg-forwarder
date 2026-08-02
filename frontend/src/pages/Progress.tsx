@@ -67,7 +67,11 @@ export function Progress() {
   }
 
   const total = job.total || 1;
-  const fraction = Math.min(job.done / total, 1);
+  // done can render ahead of total for a moment when two polls land out of
+  // order (a slower "old total" response resolving after a newer "done"
+  // one) — clamp what's displayed so the numbers never look impossible.
+  const doneDisplay = Math.min(job.done, job.total || job.done);
+  const fraction = Math.min(doneDisplay / total, 1);
   const isRunning = job.status === "running" || job.status === "queued";
   const isInterrupted = job.status === "interrupted";
 
@@ -88,7 +92,7 @@ export function Progress() {
             center={
               <>
                 <div style={{ fontSize: 46, fontWeight: 800, letterSpacing: "-0.045em", lineHeight: 1 }}>
-                  {job.done}
+                  {doneDisplay}
                 </div>
                 <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text2)" }}>
                   of {job.total || "?"} groups

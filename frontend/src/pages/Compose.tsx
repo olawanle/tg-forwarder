@@ -20,7 +20,7 @@ export function Compose() {
   const [mode, setMode] = useState<Mode>("text");
   const [message, setMessage] = useState("");
   const [savedId, setSavedId] = useState<number | null>(null);
-  const [delay, setDelay] = useState(8);
+  const [delay, setDelay] = useState(3);
   const [maxSlow, setMaxSlow] = useState(300);
   const [includeDiscord, setIncludeDiscord] = useState(false);
   const [error, setError] = useState("");

@@ -41,7 +41,7 @@ class Settings:
             ).strip().lower()
             in ("1", "true", "yes"),
             max_targets_per_run=int(os.getenv("MAX_TARGETS_PER_RUN", "50")),
-            default_delay_seconds=float(os.getenv("DEFAULT_DELAY_SECONDS", "8")),
+            default_delay_seconds=float(os.getenv("DEFAULT_DELAY_SECONDS", "3")),
         )
 
 

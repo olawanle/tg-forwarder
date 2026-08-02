@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { GlassCard } from "../components/GlassCard";
-import { AvatarBadge } from "../components/Small";
+import { AvatarBadge, ToggleSwitch } from "../components/Small";
 import { IconButton } from "../components/Small";
 import { Button } from "../components/Button";
 import { useAuth } from "../auth/AuthContext";
 import { useProfiles } from "../profile/ProfileContext";
+import { useTheme } from "../theme/useTheme";
 import { AddProfileWizard } from "./AddProfileWizard";
 
 export function Profiles() {
@@ -13,6 +14,7 @@ export function Profiles() {
   const { logout, user } = useAuth();
   const { profiles, activeProfile, setActiveProfileId, isLoading } = useProfiles();
   const [wizardOpen, setWizardOpen] = useState(false);
+  const { theme, toggle } = useTheme();
 
   return (
     <div className="page page--no-nav">
@@ -136,6 +138,13 @@ export function Profiles() {
           </div>
         </GlassCard>
       )}
+
+      <GlassCard soft>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <span style={{ fontSize: 13.5, fontWeight: 700 }}>Dark mode</span>
+          <ToggleSwitch on={theme === "dark"} onChange={toggle} />
+        </div>
+      </GlassCard>
 
       <div
         onClick={logout}

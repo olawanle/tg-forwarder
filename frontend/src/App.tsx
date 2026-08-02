@@ -1,10 +1,10 @@
-import { useEffect } from "react";
 import type { ReactNode } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { ProfileProvider } from "./profile/ProfileContext";
 import { RequireAuth } from "./routes/RequireAuth";
 import { Shell } from "./routes/Shell";
+import { useThemeInit } from "./theme/useTheme";
 import { Login } from "./pages/Login";
 import { SetPassword } from "./pages/SetPassword";
 import { Home } from "./pages/Home";
@@ -14,17 +14,6 @@ import { Targets } from "./pages/Targets";
 import { Compose } from "./pages/Compose";
 import { Progress } from "./pages/Progress";
 import { Log } from "./pages/Log";
-
-const THEME_KEY = "forwarder_theme";
-
-function useThemeInit() {
-  useEffect(() => {
-    const saved = localStorage.getItem(THEME_KEY);
-    if (saved === "light" || saved === "dark") {
-      document.documentElement.setAttribute("data-theme", saved);
-    }
-  }, []);
-}
 
 function RequirePasswordChange({ children }: { children: ReactNode }) {
   const { user } = useAuth();

@@ -81,40 +81,46 @@ export function Home() {
         </GlassCard>
       ) : (
         <>
-          {activeJob.data && (
-            <GlassCard onClick={() => navigate("/progress")}>
-              <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-                <MiniProgressRing
-                  fraction={activeJob.data.total ? activeJob.data.done / activeJob.data.total : 0}
-                />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-                    <span
-                      style={{
-                        width: 8,
-                        height: 8,
-                        borderRadius: "50%",
-                        background: "var(--ok)",
-                        animation: "glassPulse 1.8s ease-in-out infinite",
-                      }}
-                    />
-                    <span style={{ fontSize: 13, fontWeight: 700, color: "var(--ok)", textTransform: "capitalize" }}>
-                      {activeJob.data.status}
-                    </span>
+          {activeJob.data &&
+            (() => {
+              const j = activeJob.data!;
+              // See Progress.tsx: clamp so an out-of-order poll can never
+              // render done > total, even for a moment.
+              const doneDisplay = Math.min(j.done, j.total || j.done);
+              const fraction = j.total ? doneDisplay / j.total : 0;
+              return (
+                <GlassCard onClick={() => navigate("/progress")}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+                    <MiniProgressRing fraction={fraction} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                        <span
+                          style={{
+                            width: 8,
+                            height: 8,
+                            borderRadius: "50%",
+                            background: "var(--ok)",
+                            animation: "glassPulse 1.8s ease-in-out infinite",
+                          }}
+                        />
+                        <span style={{ fontSize: 13, fontWeight: 700, color: "var(--ok)", textTransform: "capitalize" }}>
+                          {j.status}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: 17, fontWeight: 800, letterSpacing: "-0.02em", marginTop: 3 }}>
+                        Job #{j.id} · {doneDisplay} of {j.total || "?"}
+                      </div>
+                      <div style={{ fontSize: 12.5, color: "var(--text2)", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        Now: {j.current_name || "—"}
+                      </div>
+                    </div>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
+                      <path d="m9 18 6-6-6-6" />
+                    </svg>
                   </div>
-                  <div style={{ fontSize: 17, fontWeight: 800, letterSpacing: "-0.02em", marginTop: 3 }}>
-                    Job #{activeJob.data.id} · {activeJob.data.done} of {activeJob.data.total || "?"}
-                  </div>
-                  <div style={{ fontSize: 12.5, color: "var(--text2)", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    Now: {activeJob.data.current_name || "—"}
-                  </div>
-                </div>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
-                  <path d="m9 18 6-6-6-6" />
-                </svg>
-              </div>
-            </GlassCard>
-          )}
+                </GlassCard>
+              );
+            })()}
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
             <div className="glass-card--soft" style={{ border: "1px solid var(--stroke)" }}>

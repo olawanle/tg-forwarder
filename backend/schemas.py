@@ -116,7 +116,7 @@ class BroadcastStartRequest(BaseModel):
     mode: str  # "text" | "saved"
     message: str | None = None
     source_message_id: int | None = None
-    delay_seconds: float = 8.0
+    delay_seconds: float = 3.0
     max_slowmode_wait: int = 300
     include_discord: bool = False
 
