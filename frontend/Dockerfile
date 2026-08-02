@@ -2,7 +2,10 @@ FROM node:20-slim AS build
 WORKDIR /app
 
 COPY frontend/package*.json ./
-RUN npm ci
+# npm install, not ci: the lockfile was generated on Windows and npm ci is
+# strict about platform-specific optional-dependency entries (e.g. native
+# rollup/lightningcss binaries), which failed on this Linux build image.
+RUN npm install
 
 COPY frontend ./
 
