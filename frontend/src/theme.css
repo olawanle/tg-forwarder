@@ -1,0 +1,210 @@
+/* Design tokens extracted verbatim from Forwarder Liquid Glass.dc.html */
+
+:root {
+  --bg1: #eef1f7;
+  --bg2: #f7f8fb;
+  --blob1: rgba(0, 122, 255, 0.3);
+  --blob2: rgba(90, 200, 250, 0.28);
+  --blob3: rgba(175, 82, 222, 0.2);
+  --glass: rgba(255, 255, 255, 0.66);
+  --glass-2: rgba(255, 255, 255, 0.48);
+  --glass-3: rgba(255, 255, 255, 0.86);
+  --stroke: rgba(255, 255, 255, 0.85);
+  --hair: rgba(20, 28, 50, 0.08);
+  --text: #0b0d12;
+  --text2: #454b58;
+  --text3: #8b91a0;
+  --shadow: 0 10px 30px rgba(19, 28, 54, 0.1), 0 2px 6px rgba(19, 28, 54, 0.05);
+  --shadow-lg: 0 24px 60px rgba(19, 28, 54, 0.18), 0 4px 12px rgba(19, 28, 54, 0.06);
+  --accent: #007aff;
+  --accent-soft: rgba(0, 122, 255, 0.12);
+  --ok: #30b060;
+  --ok-soft: rgba(48, 176, 96, 0.14);
+  --warn: #e08a00;
+  --warn-soft: rgba(224, 138, 0, 0.14);
+  --bad: #e5484d;
+  --bad-soft: rgba(229, 72, 77, 0.13);
+  --field: rgba(255, 255, 255, 0.55);
+  --field-in: inset 0 1px 3px rgba(19, 28, 54, 0.1), inset 0 0 0 1px rgba(255, 255, 255, 0.7);
+}
+
+:root[data-theme="dark"] {
+  --bg1: #0a0c11;
+  --bg2: #12151d;
+  --blob1: rgba(10, 132, 255, 0.34);
+  --blob2: rgba(41, 171, 238, 0.24);
+  --blob3: rgba(160, 80, 220, 0.26);
+  --glass: rgba(38, 43, 56, 0.58);
+  --glass-2: rgba(28, 32, 42, 0.5);
+  --glass-3: rgba(52, 58, 74, 0.62);
+  --stroke: rgba(255, 255, 255, 0.12);
+  --hair: rgba(255, 255, 255, 0.09);
+  --text: #f4f6fa;
+  --text2: #b3bacb;
+  --text3: #7c8496;
+  --shadow: 0 10px 30px rgba(0, 0, 0, 0.45), 0 2px 6px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.6);
+  --accent: #0a84ff;
+  --accent-soft: rgba(10, 132, 255, 0.2);
+  --ok: #43d17f;
+  --ok-soft: rgba(67, 209, 127, 0.16);
+  --warn: #ffb020;
+  --warn-soft: rgba(255, 176, 32, 0.16);
+  --bad: #ff6b6f;
+  --bad-soft: rgba(255, 107, 111, 0.16);
+  --field: rgba(255, 255, 255, 0.06);
+  --field-in: inset 0 1px 3px rgba(0, 0, 0, 0.35), inset 0 0 0 1px rgba(255, 255, 255, 0.07);
+}
+
+/* Respect system preference until the user picks explicitly (App.tsx sets
+   data-theme once a choice is stored in localStorage). */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]):not([data-theme="dark"]) {
+    --bg1: #0a0c11;
+    --bg2: #12151d;
+    --blob1: rgba(10, 132, 255, 0.34);
+    --blob2: rgba(41, 171, 238, 0.24);
+    --blob3: rgba(160, 80, 220, 0.26);
+    --glass: rgba(38, 43, 56, 0.58);
+    --glass-2: rgba(28, 32, 42, 0.5);
+    --glass-3: rgba(52, 58, 74, 0.62);
+    --stroke: rgba(255, 255, 255, 0.12);
+    --hair: rgba(255, 255, 255, 0.09);
+    --text: #f4f6fa;
+    --text2: #b3bacb;
+    --text3: #7c8496;
+    --shadow: 0 10px 30px rgba(0, 0, 0, 0.45), 0 2px 6px rgba(0, 0, 0, 0.3);
+    --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.6);
+    --accent: #0a84ff;
+    --accent-soft: rgba(10, 132, 255, 0.2);
+    --ok: #43d17f;
+    --ok-soft: rgba(67, 209, 127, 0.16);
+    --warn: #ffb020;
+    --warn-soft: rgba(255, 176, 32, 0.16);
+    --bad: #ff6b6f;
+    --bad-soft: rgba(255, 107, 111, 0.16);
+    --field: rgba(255, 255, 255, 0.06);
+    --field-in: inset 0 1px 3px rgba(0, 0, 0, 0.35), inset 0 0 0 1px rgba(255, 255, 255, 0.07);
+  }
+}
+
+@keyframes glassSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes glassPulse {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.06);
+  }
+}
+@keyframes glassFloat {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(3%, -4%, 0) scale(1.08);
+  }
+}
+@keyframes sheen {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(220%);
+  }
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-font-smoothing: antialiased;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: #e9ecf3;
+  font-family: "Manrope", -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  color: var(--text);
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+a:hover {
+  opacity: 0.75;
+}
+
+button {
+  font-family: inherit;
+}
+
+/* App root: the animated background blobs + safe-area-aware full-bleed
+   layout. No fake phone bezel in the real deploy — that was the design
+   tool's preview chrome. */
+.app-bg {
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: radial-gradient(120% 90% at 15% 0%, var(--bg2), var(--bg1) 70%);
+  color: var(--text);
+  position: relative;
+  overflow-x: hidden;
+}
+
+.app-blobs {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+.app-blobs > div {
+  position: absolute;
+  border-radius: 50%;
+}
+.app-blobs .b1 {
+  top: -14%;
+  left: -18%;
+  width: 80vw;
+  height: 80vw;
+  max-width: 480px;
+  max-height: 480px;
+  background: var(--blob1);
+  filter: blur(90px);
+  animation: glassFloat 18s ease-in-out infinite;
+}
+.app-blobs .b2 {
+  bottom: -16%;
+  right: -18%;
+  width: 90vw;
+  height: 90vw;
+  max-width: 520px;
+  max-height: 520px;
+  background: var(--blob3);
+  filter: blur(110px);
+  animation: glassFloat 24s ease-in-out infinite reverse;
+}
+.app-blobs .b3 {
+  top: 32%;
+  right: -10%;
+  width: 60vw;
+  height: 60vw;
+  max-width: 340px;
+  max-height: 340px;
+  background: var(--blob2);
+  filter: blur(100px);
+  animation: glassFloat 21s ease-in-out infinite;
+}

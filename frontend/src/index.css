@@ -1,0 +1,17 @@
+@import "./theme.css";
+@import "./components.css";
+
+:root {
+  color-scheme: light dark;
+}
+
+#root {
+  min-height: 100%;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}

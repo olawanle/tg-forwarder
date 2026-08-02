@@ -1,0 +1,300 @@
+.glass-card {
+  background: var(--glass);
+  backdrop-filter: blur(30px) saturate(180%);
+  -webkit-backdrop-filter: blur(30px) saturate(180%);
+  border: 1px solid var(--stroke);
+  border-radius: 26px;
+  box-shadow: var(--shadow);
+  padding: 20px;
+}
+.glass-card--soft {
+  background: var(--glass-2);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-radius: 20px;
+  padding: 13px 14px;
+}
+
+.field-label {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text2);
+  display: block;
+  margin-bottom: 7px;
+}
+
+.field {
+  height: 48px;
+  border: none;
+  border-radius: 16px;
+  background: var(--field);
+  box-shadow: var(--field-in);
+  padding: 0 15px;
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  outline: none;
+  width: 100%;
+  display: block;
+}
+.field::placeholder {
+  color: var(--text3);
+  font-weight: 500;
+}
+.field:focus {
+  box-shadow: inset 0 1px 3px rgba(19, 28, 54, 0.1), 0 0 0 3px var(--accent-soft),
+    inset 0 0 0 1px var(--accent);
+}
+textarea.field {
+  height: auto;
+  min-height: 118px;
+  padding: 14px;
+  line-height: 1.55;
+  resize: vertical;
+}
+
+.pill-btn {
+  height: 52px;
+  border: none;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #4aa8ff, #007aff);
+  box-shadow: 0 10px 24px rgba(0, 122, 255, 0.4), inset 0 1.5px 0 rgba(255, 255, 255, 0.55);
+  color: #fff;
+  font-family: inherit;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: filter 0.15s, transform 0.1s;
+  width: 100%;
+}
+.pill-btn:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+.pill-btn:active:not(:disabled) {
+  transform: scale(0.985);
+}
+.pill-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.pill-btn--secondary {
+  background: linear-gradient(180deg, #3cc0f5, #229ed9);
+  box-shadow: 0 10px 24px rgba(34, 158, 217, 0.42), inset 0 1.5px 0 rgba(255, 255, 255, 0.5);
+}
+.pill-btn--outline {
+  background: var(--glass-3);
+  color: var(--text);
+  box-shadow: var(--shadow);
+  border: 1px solid var(--stroke);
+}
+.pill-btn--danger {
+  background: var(--bad-soft);
+  color: var(--bad);
+  box-shadow: none;
+}
+.pill-btn--sm {
+  height: 40px;
+  font-size: 13.5px;
+}
+
+.icon-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 14px;
+  background: var(--glass);
+  border: 1px solid var(--stroke);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+  flex: 0 0 40px;
+  color: var(--text);
+}
+
+.segmented {
+  display: flex;
+  padding: 4px;
+  border-radius: 999px;
+  background: var(--glass-2);
+  border: 1px solid var(--stroke);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  box-shadow: var(--shadow);
+}
+.segmented button {
+  flex: 1;
+  text-align: center;
+  padding: 9px 4px;
+  border: none;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  background: transparent;
+  color: var(--text3);
+  font-family: inherit;
+}
+.segmented button.active {
+  background: var(--glass-3);
+  color: var(--text);
+  box-shadow: 0 2px 8px rgba(19, 28, 54, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+.toggle {
+  width: 46px;
+  height: 27px;
+  border-radius: 999px;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.16);
+  position: relative;
+  cursor: pointer;
+  flex: 0 0 46px;
+  border: none;
+  padding: 0;
+  background: var(--field);
+}
+.toggle.on {
+  background: linear-gradient(180deg, #4aa8ff, #007aff);
+}
+.toggle .knob {
+  position: absolute;
+  top: 2.5px;
+  left: 2.5px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.28);
+  transition: left 0.22s;
+}
+.toggle.on .knob {
+  left: 21px;
+}
+
+.avatar {
+  border-radius: 15px;
+  color: #fff;
+  font-weight: 800;
+  display: grid;
+  place-items: center;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  flex-shrink: 0;
+}
+
+.status-pill {
+  font-size: 11.5px;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 999px;
+  display: inline-block;
+  white-space: nowrap;
+}
+
+.bottom-nav-wrap {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  padding: 0 14px calc(12px + env(safe-area-inset-bottom));
+  pointer-events: none;
+}
+.bottom-nav {
+  background: var(--glass-3);
+  backdrop-filter: blur(34px) saturate(200%);
+  -webkit-backdrop-filter: blur(34px) saturate(200%);
+  border: 1px solid var(--stroke);
+  border-radius: 999px;
+  box-shadow: 0 14px 40px rgba(19, 28, 54, 0.22), inset 0 1.5px 0 rgba(255, 255, 255, 0.7);
+  padding: 11px 8px 10px;
+  display: flex;
+  pointer-events: auto;
+  max-width: 480px;
+  margin: 0 auto;
+}
+.bottom-nav a {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  color: var(--text3);
+  text-decoration: none;
+  font-size: 11px;
+  font-weight: 600;
+}
+.bottom-nav a.active {
+  color: var(--text);
+  font-weight: 800;
+}
+.bottom-nav svg {
+  display: block;
+}
+
+.bottom-sheet-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  background: rgba(10, 14, 24, 0.42);
+  backdrop-filter: blur(3px);
+}
+.bottom-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 31;
+  background: var(--glass-3);
+  backdrop-filter: blur(40px) saturate(200%);
+  -webkit-backdrop-filter: blur(40px) saturate(200%);
+  border: 1px solid var(--stroke);
+  border-bottom: none;
+  border-radius: 34px 34px 0 0;
+  box-shadow: 0 -18px 50px rgba(19, 28, 54, 0.28);
+  padding: 12px 20px calc(26px + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  max-width: 480px;
+  margin: 0 auto;
+  max-height: 86vh;
+  overflow-y: auto;
+}
+.bottom-sheet .grabber {
+  width: 40px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--text3);
+  opacity: 0.5;
+  margin: 0 auto 4px;
+}
+
+.page {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 8px 18px 140px;
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+.page--no-nav {
+  padding-bottom: 40px;
+}
+.page-title {
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+  margin: 0;
+}
+.page-subtitle {
+  font-size: 13px;
+  color: var(--text2);
+  margin-top: 4px;
+  line-height: 1.45;
+}
