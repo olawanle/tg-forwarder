@@ -120,7 +120,7 @@ export function AddProfileWizard({ onClose, onDone }: Props) {
                   flex: 1,
                   height: 4,
                   borderRadius: 999,
-                  background: reached ? "linear-gradient(90deg,#4aa8ff,#007aff)" : "var(--hair)",
+                  background: reached ? "var(--accent-grad)" : "var(--hair)",
                 }}
               />
             );

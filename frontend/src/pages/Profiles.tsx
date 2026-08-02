@@ -79,7 +79,7 @@ export function Profiles() {
                     width: 24,
                     height: 24,
                     borderRadius: "50%",
-                    background: "linear-gradient(180deg,#4aa8ff,#007aff)",
+                    background: "var(--accent-grad)",
                     display: "grid",
                     placeItems: "center",
                   }}

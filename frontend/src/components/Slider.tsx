@@ -51,7 +51,7 @@ export function Slider({
             height: 7,
             width: `${pct}%`,
             borderRadius: 999,
-            background: "linear-gradient(90deg, #4aa8ff, #007aff)",
+            background: "var(--accent-grad)",
             pointerEvents: "none",
           }}
         />

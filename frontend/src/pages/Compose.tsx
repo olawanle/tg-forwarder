@@ -182,8 +182,7 @@ export function Compose() {
                     width: 22,
                     height: 22,
                     borderRadius: "50%",
-                    background:
-                      savedId === m.id ? "linear-gradient(180deg,#4aa8ff,#007aff)" : "transparent",
+                    background: savedId === m.id ? "var(--accent-grad)" : "transparent",
                     boxShadow: "inset 0 0 0 2px var(--hair)",
                     display: "grid",
                     placeItems: "center",
