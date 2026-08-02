@@ -198,6 +198,8 @@ export function Progress() {
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, width: "100%" }}>
                 {[
                   { key: "ok", label: "Sent", fg: "var(--ok)" },
+                  { key: "skipped_stars", label: "Stars skipped", fg: "var(--warn)" },
+                  { key: "auto_deleted", label: "Auto-deleted", fg: "var(--warn)" },
                   { key: "errors", label: "Errors", fg: "var(--bad)" },
                 ].map((s) => (
                   <div key={s.key} className="glass-card--soft" style={{ textAlign: "center" }}>

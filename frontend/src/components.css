@@ -435,7 +435,7 @@ textarea.field {
 
 @media (min-width: 900px) {
   .app-shell {
-    display: flex;
+    display: block;
     min-height: 100vh;
     min-height: 100dvh;
   }
@@ -444,14 +444,14 @@ textarea.field {
     flex-direction: column;
     gap: 3px;
     width: 240px;
-    flex: 0 0 240px;
-    position: sticky;
+    position: fixed;
     top: 0;
+    left: 0;
     height: 100dvh;
     padding: 22px 14px;
     background: var(--glass);
     border-right: 1px solid var(--stroke);
-    z-index: 2;
+    z-index: 10;
   }
   .d-brand {
     display: flex;
@@ -523,7 +523,7 @@ textarea.field {
   }
 
   .app-main {
-    flex: 1;
+    margin-left: 240px;
     padding: 30px 34px 60px;
     overflow-x: hidden;
   }
