@@ -6,8 +6,9 @@ import { IconButton } from "../components/Small";
 import { Button } from "../components/Button";
 import { Field, Input } from "../components/Field";
 import { SegmentedTabs, ToggleSwitch, AvatarBadge } from "../components/Small";
+import { BottomSheet } from "../components/BottomSheet";
 import { api, ApiError } from "../api/client";
-import type { AdminUser } from "../api/types";
+import type { AdminUser, AdminUserStats } from "../api/types";
 
 export function Admin() {
   const navigate = useNavigate();
@@ -61,6 +62,13 @@ export function Admin() {
       // surfaced via mutation state below if needed
     }
   }
+
+  const [statsUser, setStatsUser] = useState<AdminUser | null>(null);
+  const userStats = useQuery({
+    queryKey: ["admin-user-stats", statsUser?.id],
+    queryFn: () => api.get<AdminUserStats>(`/admin/users/${statsUser!.id}/stats`),
+    enabled: !!statsUser,
+  });
 
   return (
     <div className="page page--no-nav">
@@ -174,7 +182,10 @@ export function Admin() {
                   New temp password: <strong style={{ fontFamily: "ui-monospace, monospace" }}>{resetResult.password}</strong>
                 </div>
               )}
-              <div style={{ display: "flex", gap: 8 }}>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <Button variant="outline" small onClick={() => setStatsUser(u)}>
+                  View stats
+                </Button>
                 <Button variant="outline" small onClick={() => handleReset(u)}>
                   Reset password
                 </Button>
@@ -189,6 +200,75 @@ export function Admin() {
             </div>
           </GlassCard>
         ))
+      )}
+
+      {statsUser && (
+        <BottomSheet onClose={() => setStatsUser(null)}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <AvatarBadge seed={statsUser.email} size={40} fontSize={14} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 16, fontWeight: 800, letterSpacing: "-0.02em", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {statsUser.email}
+              </div>
+              <div style={{ fontSize: 12, color: "var(--text3)" }}>Activity across all profiles</div>
+            </div>
+          </div>
+
+          {userStats.isLoading ? (
+            <div style={{ color: "var(--text3)", fontSize: 13, textAlign: "center", padding: "16px 0" }}>Loading…</div>
+          ) : userStats.data ? (
+            <>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <div className="glass-card--soft" style={{ border: "1px solid var(--stroke)" }}>
+                  <div className="mono" style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.03em", color: "var(--ok)" }}>
+                    {userStats.data.total_sent}
+                  </div>
+                  <div style={{ fontSize: 11.5, color: "var(--text2)", fontWeight: 600, marginTop: 2 }}>Sent</div>
+                </div>
+                <div className="glass-card--soft" style={{ border: "1px solid var(--stroke)" }}>
+                  <div className="mono" style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.03em", color: "var(--bad)" }}>
+                    {userStats.data.total_errors}
+                  </div>
+                  <div style={{ fontSize: 11.5, color: "var(--text2)", fontWeight: 600, marginTop: 2 }}>Errors</div>
+                </div>
+              </div>
+              <div style={{ fontSize: 12, color: "var(--text3)", padding: "0 2px" }}>
+                {userStats.data.total_sent + userStats.data.total_errors > 0
+                  ? `${((userStats.data.total_sent / (userStats.data.total_sent + userStats.data.total_errors)) * 100).toFixed(1)}% success · `
+                  : ""}
+                Last activity: {userStats.data.last_activity ? userStats.data.last_activity.slice(0, 16).replace("T", " ") : "never"}
+              </div>
+
+              <div style={{ fontSize: 12.5, fontWeight: 800, color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.04em", padding: "6px 2px 0" }}>
+                Per profile
+              </div>
+              {userStats.data.profiles.length === 0 ? (
+                <div style={{ color: "var(--text3)", fontSize: 13, textAlign: "center", padding: "10px 0" }}>No profiles yet.</div>
+              ) : (
+                userStats.data.profiles.map((p) => (
+                  <div key={p.id} className="glass-card--soft" style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <AvatarBadge seed={p.label} size={32} fontSize={12} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13.5, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.label}</div>
+                      <div style={{ fontSize: 11.5, color: "var(--text3)", marginTop: 1 }}>
+                        {p.last_activity ? p.last_activity.slice(0, 16).replace("T", " ") : "no activity yet"}
+                      </div>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <div className="mono" style={{ fontSize: 13, fontWeight: 800 }}>
+                        <span style={{ color: "var(--ok)" }}>{p.sent}</span>
+                        {p.errors > 0 && <span style={{ color: "var(--bad)" }}> / {p.errors}</span>}
+                      </div>
+                      <div style={{ fontSize: 10, color: "var(--text3)", fontWeight: 700 }}>sent{p.errors > 0 ? " / errors" : ""}</div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </>
+          ) : (
+            <div style={{ color: "var(--bad)", fontSize: 13, textAlign: "center", padding: "16px 0" }}>Could not load stats.</div>
+          )}
+        </BottomSheet>
       )}
     </div>
   );

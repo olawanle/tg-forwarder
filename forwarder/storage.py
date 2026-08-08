@@ -109,6 +109,23 @@ class JobRow:
 
 
 @dataclass
+class TrendPointRow:
+    day: str
+    sent: int
+    errors: int
+    total: int
+
+
+@dataclass
+class UserStatsRow:
+    total_sent: int
+    total_errors: int
+    total_attempts: int
+    last_activity: str | None
+    profiles: list[dict]
+
+
+@dataclass
 class JobResultRow:
     id: int
     job_id: int
@@ -293,6 +310,59 @@ class Storage:
             cur.execute("SELECT * FROM users ORDER BY created_at ASC")
             rows = cur.fetchall()
         return [self._user_from_row(r) for r in rows]
+
+    def get_user_stats(self, user_id: int) -> UserStatsRow:
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    COUNT(*) FILTER (WHERE sl.status = 'ok') AS total_sent,
+                    COUNT(*) FILTER (WHERE sl.status = 'error') AS total_errors,
+                    COUNT(sl.id) AS total_attempts,
+                    MAX(sl.created_at) AS last_activity
+                FROM profiles p
+                LEFT JOIN send_log sl ON sl.profile_id = p.id
+                WHERE p.user_id = %s
+                """,
+                (user_id,),
+            )
+            agg = cur.fetchone()
+
+            cur.execute(
+                """
+                SELECT
+                    p.id, p.label,
+                    COUNT(sl.id) FILTER (WHERE sl.status = 'ok') AS sent,
+                    COUNT(sl.id) FILTER (WHERE sl.status = 'error') AS errors,
+                    COUNT(sl.id) AS attempts,
+                    MAX(sl.created_at) AS last_activity
+                FROM profiles p
+                LEFT JOIN send_log sl ON sl.profile_id = p.id
+                WHERE p.user_id = %s
+                GROUP BY p.id, p.label
+                ORDER BY p.id ASC
+                """,
+                (user_id,),
+            )
+            profile_rows = cur.fetchall()
+
+        return UserStatsRow(
+            total_sent=int(agg["total_sent"] or 0),
+            total_errors=int(agg["total_errors"] or 0),
+            total_attempts=int(agg["total_attempts"] or 0),
+            last_activity=str(agg["last_activity"]) if agg["last_activity"] else None,
+            profiles=[
+                {
+                    "id": r["id"],
+                    "label": r["label"],
+                    "sent": int(r["sent"] or 0),
+                    "errors": int(r["errors"] or 0),
+                    "attempts": int(r["attempts"] or 0),
+                    "last_activity": str(r["last_activity"]) if r["last_activity"] else None,
+                }
+                for r in profile_rows
+            ],
+        )
 
     def count_admins(self) -> int:
         with self._conn() as conn, conn.cursor() as cur:
@@ -519,6 +589,31 @@ class Storage:
                 target_name=r["target_name"],
                 status=r["status"],
                 detail=r["detail"],
+            )
+            for r in rows
+        ]
+
+    def get_send_trend(self, profile_id: int, days: int = 30) -> list[TrendPointRow]:
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    date_trunc('day', created_at)::date AS day,
+                    COUNT(*) FILTER (WHERE status = 'ok') AS sent,
+                    COUNT(*) FILTER (WHERE status = 'error') AS errors,
+                    COUNT(*) AS total
+                FROM send_log
+                WHERE profile_id = %s
+                  AND created_at >= now() - (%s || ' days')::interval
+                GROUP BY day
+                ORDER BY day ASC
+                """,
+                (profile_id, days),
+            )
+            rows = cur.fetchall()
+        return [
+            TrendPointRow(
+                day=str(r["day"]), sent=int(r["sent"]), errors=int(r["errors"]), total=int(r["total"])
             )
             for r in rows
         ]

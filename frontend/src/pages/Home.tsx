@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { GlassCard } from "../components/GlassCard";
 import { AvatarBadge, StatusPill, toneForStatus } from "../components/Small";
 import { MiniProgressRing } from "../components/ProgressRing";
+import { TrendChart } from "../components/TrendChart";
 import { useAuth } from "../auth/AuthContext";
 import { useProfiles } from "../profile/ProfileContext";
 import { api } from "../api/client";
@@ -150,6 +151,8 @@ export function Home() {
           </div>
         </div>
 
+        <TrendChart profileId={profileId} />
+
         <GlassCard>
           <div style={{ display: "flex", flexDirection: "column", gap: 13 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -283,6 +286,8 @@ export function Home() {
                 </div>
               </GlassCard>
             </div>
+
+            <TrendChart profileId={profileId} />
 
             <GlassCard>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>

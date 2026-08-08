@@ -88,3 +88,17 @@ def user_profiles(
     user_id: int, _: UserRow = Depends(require_admin), store: Storage = Depends(get_store)
 ):
     return [profile_out(p) for p in store.list_profiles_for_user(user_id)]
+
+
+@router.get("/users/{user_id}/stats", response_model=schemas.AdminUserStatsOut)
+def user_stats(
+    user_id: int, _: UserRow = Depends(require_admin), store: Storage = Depends(get_store)
+):
+    s = store.get_user_stats(user_id)
+    return schemas.AdminUserStatsOut(
+        total_sent=s.total_sent,
+        total_errors=s.total_errors,
+        total_attempts=s.total_attempts,
+        last_activity=s.last_activity,
+        profiles=[schemas.AdminUserProfileStatsOut(**p) for p in s.profiles],
+    )

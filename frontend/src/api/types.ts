@@ -84,3 +84,27 @@ export interface AdminUser {
   created_at: string;
   profile_count: number;
 }
+
+export interface TrendPoint {
+  day: string;
+  sent: number;
+  errors: number;
+  total: number;
+}
+
+export interface AdminUserProfileStats {
+  id: number;
+  label: string;
+  sent: number;
+  errors: number;
+  attempts: number;
+  last_activity: string | null;
+}
+
+export interface AdminUserStats {
+  total_sent: number;
+  total_errors: number;
+  total_attempts: number;
+  last_activity: string | null;
+  profiles: AdminUserProfileStats[];
+}

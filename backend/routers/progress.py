@@ -44,3 +44,16 @@ def send_log(
     profile: ProfileRow = Depends(get_owned_profile), store: Storage = Depends(get_store)
 ):
     return [send_log_out(r) for r in store.list_send_logs(profile.id, 150)]
+
+
+@router.get("/stats/trend", response_model=list[schemas.TrendPointOut])
+def stats_trend(
+    days: int = 30,
+    profile: ProfileRow = Depends(get_owned_profile),
+    store: Storage = Depends(get_store),
+):
+    days = max(1, min(days, 90))
+    return [
+        schemas.TrendPointOut(day=p.day, sent=p.sent, errors=p.errors, total=p.total)
+        for p in store.get_send_trend(profile.id, days)
+    ]

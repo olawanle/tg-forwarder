@@ -150,6 +150,13 @@ class JobResultOut(BaseModel):
     created_at: str
 
 
+class TrendPointOut(BaseModel):
+    day: str
+    sent: int
+    errors: int
+    total: int
+
+
 class SendLogOut(BaseModel):
     id: int
     platform: str
@@ -186,3 +193,20 @@ class AdminSetActiveRequest(BaseModel):
 
 class AdminResetPasswordResponse(BaseModel):
     temp_password: str
+
+
+class AdminUserProfileStatsOut(BaseModel):
+    id: int
+    label: str
+    sent: int
+    errors: int
+    attempts: int
+    last_activity: str | None
+
+
+class AdminUserStatsOut(BaseModel):
+    total_sent: int
+    total_errors: int
+    total_attempts: int
+    last_activity: str | None
+    profiles: list[AdminUserProfileStatsOut]
