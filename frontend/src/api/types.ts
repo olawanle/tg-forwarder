@@ -12,6 +12,8 @@ export interface Profile {
   draft_message: string;
   draft_saved_message_id: number | null;
   draft_mode: string;
+  draft_messages: string[];
+  draft_saved_message_ids: number[];
   has_session: boolean;
   created_at: string;
   updated_at: string;
@@ -23,6 +25,9 @@ export interface Job {
   status: string;
   message: string;
   source_message_id: number | null;
+  messages: string[];
+  source_message_ids: number[];
+  scheduled_at: string | null;
   delay_seconds: number;
   max_slowmode_wait: number;
   include_discord: boolean;

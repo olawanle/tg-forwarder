@@ -26,6 +26,8 @@ class ProfileOut(BaseModel):
     draft_message: str
     draft_saved_message_id: int | None
     draft_mode: str
+    draft_messages: list[str]
+    draft_saved_message_ids: list[int]
     has_session: bool
     created_at: str
     updated_at: str
@@ -98,11 +100,11 @@ class DiscordSelectionRequest(BaseModel):
 
 
 class DraftTextRequest(BaseModel):
-    message: str
+    messages: list[str]
 
 
 class DraftSavedMessageRequest(BaseModel):
-    saved_message_id: int
+    saved_message_ids: list[int]
 
 
 class SavedMessageOut(BaseModel):
@@ -116,6 +118,9 @@ class BroadcastStartRequest(BaseModel):
     mode: str  # "text" | "saved"
     message: str | None = None
     source_message_id: int | None = None
+    messages: list[str] | None = None  # 2+ = rotate across targets
+    source_message_ids: list[int] | None = None  # 2+ = rotate across targets
+    scheduled_at: str | None = None  # ISO datetime, future — None = send now
     delay_seconds: float = 3.0
     max_slowmode_wait: int = 300
     include_discord: bool = False
@@ -127,6 +132,9 @@ class JobOut(BaseModel):
     status: str
     message: str
     source_message_id: int | None
+    messages: list[str]
+    source_message_ids: list[int]
+    scheduled_at: str | None
     delay_seconds: float
     max_slowmode_wait: int
     include_discord: bool

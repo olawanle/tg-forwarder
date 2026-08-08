@@ -29,6 +29,7 @@ class JobRunner:
         self._lock = threading.Lock()
         self._workers: dict[int, _ProfileWorker] = {}
         self._started = False
+        self._scheduler_started = False
 
     def ensure_started(self, store: Storage) -> None:
         """Call on app boot: interrupt orphans from a dead process, then
@@ -68,13 +69,20 @@ class JobRunner:
         include_discord: bool,
         telegram_session: str,
         source_message_id: int | None = None,
+        messages: list[str] | None = None,
+        source_message_ids: list[int] | None = None,
+        scheduled_at: str | None = None,
     ) -> int:
         with self._lock:
-            if self.is_worker_alive(profile_id):
-                raise RuntimeError("A broadcast is already running for this profile")
-            active = store.get_active_job(profile_id)
-            if active:
-                raise RuntimeError(f"Job #{active.id} is already {active.status}")
+            # Scheduling doesn't need the profile to be free right now — it
+            # only needs to be free when scheduled_at arrives, which the
+            # scheduler loop checks itself before launching.
+            if not scheduled_at:
+                if self.is_worker_alive(profile_id):
+                    raise RuntimeError("A broadcast is already running for this profile")
+                active = store.get_active_job(profile_id)
+                if active:
+                    raise RuntimeError(f"Job #{active.id} is already {active.status}")
 
             job_id = store.create_job(
                 profile_id=profile_id,
@@ -83,7 +91,14 @@ class JobRunner:
                 max_slowmode_wait=max_slowmode_wait,
                 include_discord=include_discord,
                 source_message_id=source_message_id,
+                messages=messages,
+                source_message_ids=source_message_ids,
+                scheduled_at=scheduled_at,
+                status="scheduled" if scheduled_at else "queued",
             )
+            if scheduled_at:
+                return job_id
+
             stop = threading.Event()
             thread = threading.Thread(
                 target=self._run_job,
@@ -96,6 +111,59 @@ class JobRunner:
             )
             thread.start()
             return job_id
+
+    def cancel_scheduled(self, job_id: int, store: Storage) -> bool:
+        return store.cancel_scheduled_job(job_id)
+
+    def start_scheduler(self) -> None:
+        """Background poll loop that launches scheduled broadcasts when
+        their time comes. Idempotent — safe to call on every boot."""
+        with self._lock:
+            if self._scheduler_started:
+                return
+            self._scheduler_started = True
+        thread = threading.Thread(
+            target=self._scheduler_loop, name="broadcast-scheduler", daemon=True
+        )
+        thread.start()
+
+    def _scheduler_loop(self) -> None:
+        settings = get_settings()
+        store = Storage(settings.database_url)
+        while True:
+            try:
+                for job in store.list_due_scheduled_jobs():
+                    if self.is_worker_alive(job.profile_id):
+                        continue  # profile busy — picked up on a later tick
+                    profile = store.get_profile(job.profile_id)
+                    session = profile.telegram_session if profile else ""
+                    if not session:
+                        continue
+                    self._launch_scheduled(job.id, job.profile_id, session, store)
+            except Exception:
+                log.exception("Scheduler tick failed")
+            time.sleep(20)
+
+    def _launch_scheduled(
+        self, job_id: int, profile_id: int, telegram_session: str, store: Storage
+    ) -> None:
+        with self._lock:
+            if self.is_worker_alive(profile_id):
+                return
+            store.update_job(
+                job_id, status="queued", current_detail="Starting scheduled broadcast…"
+            )
+            stop = threading.Event()
+            thread = threading.Thread(
+                target=self._run_job,
+                args=(job_id, profile_id, telegram_session, stop),
+                name=f"broadcast-job-{job_id}",
+                daemon=True,
+            )
+            self._workers[profile_id] = _ProfileWorker(
+                thread=thread, stop=stop, active_job_id=job_id
+            )
+            thread.start()
 
     def resume_interrupted(
         self, profile_id: int, store: Storage, telegram_session: str | None = None
@@ -205,8 +273,6 @@ class JobRunner:
             assert job is not None
             delay = float(job.delay_seconds)
             max_slow = int(job.max_slowmode_wait)
-            message = job.message
-            source_message_id = job.source_message_id
 
             while True:
                 if stop.is_set():
@@ -223,6 +289,19 @@ class JobRunner:
                 pending = list(job.pending or [])
                 if not pending:
                     break
+
+                # Rotation, keyed off the persisted done-count so it's
+                # correct across a resume too. Empty lists (jobs created
+                # before this feature, or single-message jobs) fall back to
+                # the original single message/source_message_id untouched.
+                if job.messages:
+                    message = job.messages[job.done % len(job.messages)]
+                else:
+                    message = job.message
+                if job.source_message_ids:
+                    source_message_id = job.source_message_ids[job.done % len(job.source_message_ids)]
+                else:
+                    source_message_id = job.source_message_id
 
                 target = pending[0]
                 remaining = pending[1:]
@@ -299,10 +378,16 @@ class JobRunner:
                 )
                 channels = store.get_selected_discord_channels(profile_id)
                 if channels and dc.configured():
+                    # Discord always sends the primary/first variant,
+                    # independent of whichever variant the last Telegram
+                    # target happened to rotate to — and this also can't be
+                    # undefined even if the Telegram loop ran zero
+                    # iterations (e.g. an empty group list).
+                    discord_message = job.messages[0] if job.messages else job.message
                     try:
                         results = asyncio.run(
                             dc.broadcast(
-                                message,
+                                discord_message,
                                 channels,
                                 delay,
                                 max(len(channels), 1),

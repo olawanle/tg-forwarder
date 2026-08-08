@@ -71,6 +71,8 @@ class ProfileRow:
     draft_message: str
     draft_saved_message_id: int | None
     draft_mode: str
+    draft_messages: list[str]
+    draft_saved_message_ids: list[int]
     created_at: str
     updated_at: str
 
@@ -106,6 +108,9 @@ class JobRow:
     error: str
     pending: list[dict]
     summary: dict
+    messages: list[str]
+    source_message_ids: list[int]
+    scheduled_at: str | None
 
 
 @dataclass
@@ -256,6 +261,22 @@ class Storage:
                 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS draft_saved_message_id BIGINT;
                 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS draft_mode TEXT NOT NULL DEFAULT 'text';
                 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS source_message_id BIGINT;
+                """
+            )
+            # Message rotation + scheduling. Empty-list/NULL defaults mean any
+            # job created before this migration (still queued/running/
+            # interrupted through the deploy) falls back to the original
+            # single message/source_message_id behavior untouched — see
+            # job_runner._run_job.
+            cur.execute(
+                """
+                ALTER TABLE profiles ADD COLUMN IF NOT EXISTS draft_messages JSONB NOT NULL DEFAULT '[]';
+                ALTER TABLE profiles ADD COLUMN IF NOT EXISTS draft_saved_message_ids JSONB NOT NULL DEFAULT '[]';
+                ALTER TABLE jobs ADD COLUMN IF NOT EXISTS messages_json JSONB NOT NULL DEFAULT '[]';
+                ALTER TABLE jobs ADD COLUMN IF NOT EXISTS source_message_ids_json JSONB NOT NULL DEFAULT '[]';
+                ALTER TABLE jobs ADD COLUMN IF NOT EXISTS scheduled_at TIMESTAMPTZ;
+                CREATE INDEX IF NOT EXISTS idx_jobs_scheduled ON jobs(status, scheduled_at)
+                    WHERE status = 'scheduled';
                 """
             )
 
@@ -419,6 +440,8 @@ class Storage:
             draft_message=row["draft_message"] or "",
             draft_saved_message_id=row["draft_saved_message_id"],
             draft_mode=row["draft_mode"] or "text",
+            draft_messages=_jsonval(row["draft_messages"]) or [],
+            draft_saved_message_ids=_jsonval(row["draft_saved_message_ids"]) or [],
             created_at=str(row["created_at"]),
             updated_at=str(row["updated_at"]),
         )
@@ -470,6 +493,38 @@ class Storage:
                 WHERE id = %s
                 """,
                 (saved_message_id, profile_id),
+            )
+
+    def set_draft_messages(self, profile_id: int, messages: list[str]) -> None:
+        """Rotation-capable draft (2+ text variants). Also mirrors the first
+        variant into the legacy single draft_message column so the Streamlit
+        dashboard shows something sensible if the same profile is opened
+        there — Streamlit itself never writes this new column."""
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE profiles
+                SET draft_messages = %s, draft_message = %s, draft_saved_message_ids = '[]',
+                    draft_mode = 'text', updated_at = now()
+                WHERE id = %s
+                """,
+                (psycopg2.extras.Json(messages), messages[0] if messages else "", profile_id),
+            )
+
+    def set_draft_saved_messages(self, profile_id: int, saved_message_ids: list[int]) -> None:
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE profiles
+                SET draft_saved_message_ids = %s, draft_saved_message_id = %s, draft_messages = '[]',
+                    draft_mode = 'saved', updated_at = now()
+                WHERE id = %s
+                """,
+                (
+                    psycopg2.extras.Json(saved_message_ids),
+                    saved_message_ids[0] if saved_message_ids else None,
+                    profile_id,
+                ),
             )
 
     # --------------------------------------------------------- skip / block
@@ -640,6 +695,9 @@ class Storage:
             error=row["error"] or "",
             pending=_jsonval(row["pending_json"]) or [],
             summary=_jsonval(row["summary_json"]) or {},
+            messages=_jsonval(row["messages_json"]) or [],
+            source_message_ids=_jsonval(row["source_message_ids_json"]) or [],
+            scheduled_at=str(row["scheduled_at"]) if row["scheduled_at"] else None,
         )
 
     def create_job(
@@ -650,6 +708,10 @@ class Storage:
         max_slowmode_wait: int,
         include_discord: bool,
         source_message_id: int | None = None,
+        messages: list[str] | None = None,
+        source_message_ids: list[int] | None = None,
+        scheduled_at: str | None = None,
+        status: str = "queued",
     ) -> int:
         with self._conn() as conn, conn.cursor() as cur:
             cur.execute(
@@ -657,17 +719,26 @@ class Storage:
                 INSERT INTO jobs(
                     profile_id, status, message, source_message_id, delay_seconds,
                     max_slowmode_wait, include_discord, total, done,
-                    current_name, current_detail, error, pending_json, summary_json
-                ) VALUES (%s, 'queued', %s, %s, %s, %s, %s, 0, 0, '', 'Queued', '', '[]', '{}')
+                    current_name, current_detail, error, pending_json, summary_json,
+                    messages_json, source_message_ids_json, scheduled_at
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, 0, 0,
+                    '', %s, '', '[]', '{}', %s, %s, %s
+                )
                 RETURNING id
                 """,
                 (
                     profile_id,
+                    status,
                     message,
                     source_message_id,
                     delay_seconds,
                     max_slowmode_wait,
                     include_discord,
+                    "Scheduled" if status == "scheduled" else "Queued",
+                    psycopg2.extras.Json(messages or []),
+                    psycopg2.extras.Json(source_message_ids or []),
+                    scheduled_at,
                 ),
             )
             return int(cur.fetchone()["id"])
@@ -714,6 +785,45 @@ class Storage:
             )
             rows = cur.fetchall()
         return [self._job_from_row(r) for r in rows]
+
+    def list_scheduled_jobs_for_profile(self, profile_id: int) -> list[JobRow]:
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT * FROM jobs
+                WHERE profile_id = %s AND status = 'scheduled'
+                ORDER BY scheduled_at ASC
+                """,
+                (profile_id,),
+            )
+            rows = cur.fetchall()
+        return [self._job_from_row(r) for r in rows]
+
+    def list_due_scheduled_jobs(self) -> list[JobRow]:
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT * FROM jobs
+                WHERE status = 'scheduled' AND scheduled_at <= now()
+                ORDER BY id ASC
+                """
+            )
+            rows = cur.fetchall()
+        return [self._job_from_row(r) for r in rows]
+
+    def cancel_scheduled_job(self, job_id: int) -> bool:
+        """Only cancels a job that hasn't started yet (still 'scheduled').
+        Returns False if it already launched — use request_cancel for that."""
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE jobs SET status = 'cancelled', current_detail = 'Cancelled before it started',
+                    updated_at = now()
+                WHERE id = %s AND status = 'scheduled'
+                """,
+                (job_id,),
+            )
+            return cur.rowcount > 0
 
     def update_job(self, job_id: int, **fields: Any) -> None:
         if not fields:

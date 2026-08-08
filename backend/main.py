@@ -36,7 +36,9 @@ def on_startup() -> None:
     settings = get_settings()
     store = Storage(settings.database_url)
     bootstrap_admin(store, settings)
-    get_job_runner().ensure_started(store)
+    runner = get_job_runner()
+    runner.ensure_started(store)
+    runner.start_scheduler()
 
 
 @app.get("/health")

@@ -11,6 +11,12 @@ import { api, ApiError } from "../api/client";
 import type { Job, SavedMessage } from "../api/types";
 
 type Mode = "text" | "saved";
+const MAX_VARIANTS = 5;
+
+function toLocalInputValue(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
 
 export function Compose() {
   const { activeProfile } = useProfiles();
@@ -18,11 +24,13 @@ export function Compose() {
   const qc = useQueryClient();
 
   const [mode, setMode] = useState<Mode>("text");
-  const [message, setMessage] = useState("");
-  const [savedId, setSavedId] = useState<number | null>(null);
+  const [messages, setMessages] = useState<string[]>([""]);
+  const [savedIds, setSavedIds] = useState<number[]>([]);
   const [delay, setDelay] = useState(3);
   const [maxSlow, setMaxSlow] = useState(300);
   const [includeDiscord, setIncludeDiscord] = useState(false);
+  const [scheduleOn, setScheduleOn] = useState(false);
+  const [scheduledAt, setScheduledAt] = useState(() => toLocalInputValue(new Date(Date.now() + 30 * 60 * 1000)));
   const [error, setError] = useState("");
   const [saveNotice, setSaveNotice] = useState("");
 
@@ -31,13 +39,30 @@ export function Compose() {
   useEffect(() => {
     if (!activeProfile) return;
     setMode(activeProfile.draft_mode === "saved" ? "saved" : "text");
-    setMessage(activeProfile.draft_message || "");
-    setSavedId(activeProfile.draft_saved_message_id);
+    const draftMessages = activeProfile.draft_messages.length
+      ? activeProfile.draft_messages
+      : activeProfile.draft_message
+        ? [activeProfile.draft_message]
+        : [""];
+    setMessages(draftMessages);
+    setSavedIds(
+      activeProfile.draft_saved_message_ids.length
+        ? activeProfile.draft_saved_message_ids
+        : activeProfile.draft_saved_message_id
+          ? [activeProfile.draft_saved_message_id]
+          : [],
+    );
   }, [activeProfile?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const activeJob = useQuery({
     queryKey: ["active-job", profileId],
     queryFn: () => api.get<Job | null>(`/profiles/${profileId}/jobs/active`),
+    enabled: !!profileId,
+  });
+
+  const scheduledJobs = useQuery({
+    queryKey: ["scheduled-jobs", profileId],
+    queryFn: () => api.get<Job[]>(`/profiles/${profileId}/jobs/scheduled`),
     enabled: !!profileId,
   });
 
@@ -53,21 +78,36 @@ export function Compose() {
     enabled: !!profileId,
   });
 
+  const cleanMessages = messages.map((m) => m.trim()).filter(Boolean);
+
   const start = useMutation({
     mutationFn: () =>
       api.post<Job>(`/profiles/${profileId}/broadcast/start`, {
         mode,
-        message: mode === "text" ? message : "",
-        source_message_id: mode === "saved" ? savedId : null,
+        message: mode === "text" ? cleanMessages[0] ?? "" : "",
+        source_message_id: mode === "saved" ? savedIds[0] ?? null : null,
+        messages: mode === "text" ? cleanMessages : undefined,
+        source_message_ids: mode === "saved" ? savedIds : undefined,
+        scheduled_at: scheduleOn && scheduledAt ? new Date(scheduledAt).toISOString() : null,
         delay_seconds: delay,
         max_slowmode_wait: maxSlow,
         include_discord: includeDiscord,
       }),
-    onSuccess: () => {
+    onSuccess: (job) => {
       qc.invalidateQueries({ queryKey: ["active-job", profileId] });
-      navigate("/progress");
+      qc.invalidateQueries({ queryKey: ["scheduled-jobs", profileId] });
+      if (job.status === "scheduled") {
+        setSaveNotice(`Scheduled for ${new Date(job.scheduled_at!).toLocaleString()}.`);
+      } else {
+        navigate("/progress");
+      }
     },
     onError: (err) => setError(err instanceof ApiError ? err.message : "Could not start broadcast."),
+  });
+
+  const cancelScheduled = useMutation({
+    mutationFn: (jobId: number) => api.post(`/profiles/${profileId}/jobs/${jobId}/cancel-scheduled`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["scheduled-jobs", profileId] }),
   });
 
   async function saveDraft() {
@@ -75,15 +115,28 @@ export function Compose() {
     setSaveNotice("");
     try {
       if (mode === "text") {
-        await api.put(`/profiles/${profileId}/draft/text`, { message });
-      } else if (savedId) {
-        await api.put(`/profiles/${profileId}/draft/saved`, { saved_message_id: savedId });
+        await api.put(`/profiles/${profileId}/draft/text`, { messages: cleanMessages });
+      } else if (savedIds.length) {
+        await api.put(`/profiles/${profileId}/draft/saved`, { saved_message_ids: savedIds });
       }
       setSaveNotice("Draft saved.");
       qc.invalidateQueries({ queryKey: ["profiles"] });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not save draft.");
     }
+  }
+
+  function updateVariant(i: number, value: string) {
+    setMessages((prev) => prev.map((m, idx) => (idx === i ? value : m)));
+  }
+  function addVariant() {
+    setMessages((prev) => (prev.length < MAX_VARIANTS ? [...prev, ""] : prev));
+  }
+  function removeVariant(i: number) {
+    setMessages((prev) => (prev.length > 1 ? prev.filter((_, idx) => idx !== i) : prev));
+  }
+  function toggleSaved(id: number) {
+    setSavedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   }
 
   if (!activeProfile) {
@@ -118,8 +171,9 @@ export function Compose() {
   }
 
   const selectedCount = selection.data?.length ?? 0;
-  const canStart =
-    !!activeProfile.has_session && (mode === "text" ? message.trim().length > 0 : !!savedId);
+  const hasContent = mode === "text" ? cleanMessages.length > 0 : savedIds.length > 0;
+  const scheduleValid = !scheduleOn || (!!scheduledAt && new Date(scheduledAt).getTime() > Date.now());
+  const canStart = !!activeProfile.has_session && hasContent && scheduleValid;
 
   return (
     <div className="page">
@@ -127,6 +181,31 @@ export function Compose() {
         <h1 className="page-title">Compose</h1>
         <div className="page-subtitle">Runs as a background job — you can close the app.</div>
       </div>
+
+      {(scheduledJobs.data ?? []).length > 0 && (
+        <GlassCard soft>
+          <div style={{ fontSize: 12, fontWeight: 800, color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 8 }}>
+            Upcoming
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {(scheduledJobs.data ?? []).map((j) => (
+              <div key={j.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                <span style={{ fontSize: 13, fontWeight: 600 }}>
+                  {j.scheduled_at ? new Date(j.scheduled_at).toLocaleString() : "—"}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => cancelScheduled.mutate(j.id)}
+                  disabled={cancelScheduled.isPending}
+                  style={{ background: "none", border: "none", color: "var(--bad)", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}
+                >
+                  Cancel
+                </button>
+              </div>
+            ))}
+          </div>
+        </GlassCard>
+      )}
 
       <SegmentedTabs
         value={mode}
@@ -138,30 +217,50 @@ export function Compose() {
       />
 
       {mode === "text" ? (
-        <GlassCard>
-          <div style={{ display: "flex", flexDirection: "column", gap: 11 }}>
-            <Textarea
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              placeholder="Your marketing message…"
-            />
-            <div style={{ display: "flex", justifyContent: "flex-end" }}>
-              <span style={{ fontSize: 12, color: "var(--text3)", fontWeight: 600 }}>
-                {message.length} / 4096
-              </span>
-            </div>
-            <div style={{ fontSize: 12, color: "var(--text3)", lineHeight: 1.5 }}>
-              Supports <code>**bold**</code>, <code>__italic__</code>, <code>`code`</code>,{" "}
-              <code>[text](url)</code>. Formatting copied from a Telegram message won't survive —
-              retype it with this syntax, or switch to Saved Message mode.
-            </div>
+        <>
+          {messages.map((m, i) => (
+            <GlassCard key={i}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 11 }}>
+                {messages.length > 1 && (
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <span style={{ fontSize: 11.5, fontWeight: 800, color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                      Variant {i + 1}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => removeVariant(i)}
+                      style={{ background: "none", border: "none", color: "var(--bad)", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                )}
+                <Textarea value={m} onChange={(e) => updateVariant(i, e.target.value)} placeholder="Your marketing message…" />
+                <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                  <span style={{ fontSize: 12, color: "var(--text3)", fontWeight: 600 }}>{m.length} / 4096</span>
+                </div>
+              </div>
+            </GlassCard>
+          ))}
+          {messages.length < MAX_VARIANTS && (
+            <Button variant="outline" small onClick={addVariant}>
+              + Add message variant
+            </Button>
+          )}
+          <div style={{ fontSize: 12, color: "var(--text3)", lineHeight: 1.5, padding: "0 4px" }}>
+            {messages.length > 1
+              ? "Rotates across targets in order — helps avoid identical repeated text getting flagged. "
+              : ""}
+            Supports <code>**bold**</code>, <code>__italic__</code>, <code>`code`</code>, <code>[text](url)</code>.
+            Formatting copied from a Telegram message won't survive — retype it with this syntax, or switch to Saved
+            Message mode.
           </div>
-        </GlassCard>
+        </>
       ) : (
         <>
           <div style={{ fontSize: 12.5, color: "var(--text2)", lineHeight: 1.5, padding: "0 4px" }}>
-            Write it in Telegram's Saved Messages with full formatting, react with any emoji to
-            tag it, then pick it here — formatting, media and custom emoji survive exactly.
+            Write it in Telegram's Saved Messages with full formatting, react with any emoji to tag it, then pick it
+            here. Select more than one to rotate between them across a broadcast.
           </div>
           <Button
             variant="outline"
@@ -170,34 +269,37 @@ export function Compose() {
           >
             {savedMessages.isFetching ? "Loading…" : "Refresh tagged Saved Messages"}
           </Button>
-          {(savedMessages.data ?? []).map((m) => (
-            <GlassCard key={m.id} onClick={() => setSavedId(m.id)}>
-              <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
-                <span style={{ fontSize: 22, lineHeight: 1 }}>{m.tag}</span>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13.5, lineHeight: 1.5 }}>{m.preview}</div>
+          {(savedMessages.data ?? []).map((m) => {
+            const idx = savedIds.indexOf(m.id);
+            const selected = idx !== -1;
+            return (
+              <GlassCard key={m.id} onClick={() => toggleSaved(m.id)}>
+                <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+                  <span style={{ fontSize: 22, lineHeight: 1 }}>{m.tag}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13.5, lineHeight: 1.5 }}>{m.preview}</div>
+                  </div>
+                  <span
+                    style={{
+                      width: 22,
+                      height: 22,
+                      borderRadius: "50%",
+                      background: selected ? "var(--accent-grad)" : "transparent",
+                      boxShadow: "inset 0 0 0 2px var(--hair)",
+                      display: "grid",
+                      placeItems: "center",
+                      flexShrink: 0,
+                      fontSize: 11,
+                      fontWeight: 800,
+                      color: "#fff",
+                    }}
+                  >
+                    {selected ? idx + 1 : ""}
+                  </span>
                 </div>
-                <span
-                  style={{
-                    width: 22,
-                    height: 22,
-                    borderRadius: "50%",
-                    background: savedId === m.id ? "var(--accent-grad)" : "transparent",
-                    boxShadow: "inset 0 0 0 2px var(--hair)",
-                    display: "grid",
-                    placeItems: "center",
-                    flexShrink: 0,
-                  }}
-                >
-                  {savedId === m.id && (
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={3.6} strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M20 6 9 17l-5-5" />
-                    </svg>
-                  )}
-                </span>
-              </div>
-            </GlassCard>
-          ))}
+              </GlassCard>
+            );
+          })}
           <div
             style={{
               display: "flex",
@@ -209,8 +311,7 @@ export function Compose() {
             }}
           >
             <span style={{ fontSize: 12.5, lineHeight: 1.5, color: "var(--text2)" }}>
-              Without Telegram Premium on this profile, every group shows a "Forwarded from"
-              label.
+              Without Telegram Premium on this profile, every group shows a "Forwarded from" label.
             </span>
           </div>
         </>
@@ -235,6 +336,20 @@ export function Compose() {
             </span>
             <ToggleSwitch on={includeDiscord} onChange={setIncludeDiscord} />
           </div>
+          <div style={{ height: 1, background: "var(--hair)" }} />
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <span style={{ fontSize: 13.5, fontWeight: 700, paddingRight: 14 }}>Schedule for later</span>
+            <ToggleSwitch on={scheduleOn} onChange={setScheduleOn} />
+          </div>
+          {scheduleOn && (
+            <input
+              type="datetime-local"
+              className="field"
+              value={scheduledAt}
+              min={toLocalInputValue(new Date())}
+              onChange={(e) => setScheduledAt(e.target.value)}
+            />
+          )}
         </div>
       </GlassCard>
 
@@ -250,7 +365,7 @@ export function Compose() {
           disabled={!canStart || start.isPending}
           onClick={() => start.mutate()}
         >
-          {start.isPending ? "Starting…" : "Broadcast now"}
+          {start.isPending ? "Starting…" : scheduleOn ? "Schedule broadcast" : "Broadcast now"}
         </Button>
       </div>
     </div>
