@@ -38,6 +38,17 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   if (!res.ok) {
     const detail = data && typeof data === "object" ? (data as { detail?: unknown }).detail : undefined;
     const message = typeof detail === "string" ? detail : res.statusText || "Request failed";
+    // Only an authenticated request's token being rejected counts as a
+    // session expiring — a bare 401 with no token attached is just a wrong
+    // password on the login form itself, which must not trigger this.
+    if (res.status === 401 && token) {
+      setToken(null);
+      localStorage.removeItem("forwarder_auth");
+      localStorage.removeItem("forwarder_active_profile");
+      if (!window.location.pathname.startsWith("/login")) {
+        window.location.href = "/login?expired=1";
+      }
+    }
     throw new ApiError(res.status, message);
   }
   return data as T;

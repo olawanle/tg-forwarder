@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { GlassCard } from "../components/GlassCard";
 import { Field, Input } from "../components/Field";
 import { Button } from "../components/Button";
@@ -22,9 +22,12 @@ const MARK = (
 export function Login() {
   const { login } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
+  const [error, setError] = useState(
+    searchParams.get("expired") ? "Your session expired — log in again to continue." : "",
+  );
   const [busy, setBusy] = useState(false);
 
   async function handleSubmit(e: FormEvent) {
