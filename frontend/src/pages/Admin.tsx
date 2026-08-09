@@ -89,6 +89,17 @@ export function Admin() {
     enabled: !!statsUser,
   });
 
+  const [delayEditUser, setDelayEditUser] = useState<AdminUser | null>(null);
+  const [delayEditValue, setDelayEditValue] = useState(3);
+  const setUserDelay = useMutation({
+    mutationFn: ({ id, value }: { id: number; value: number | null }) =>
+      api.patch(`/admin/users/${id}/default-delay`, { default_delay_seconds: value }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin-users"] });
+      setDelayEditUser(null);
+    },
+  });
+
   return (
     <div className="page page--no-nav">
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
@@ -207,7 +218,8 @@ export function Admin() {
                     {u.email}
                   </div>
                   <div style={{ fontSize: 12, color: "var(--text3)", marginTop: 2 }}>
-                    {u.profile_count} profile{u.profile_count === 1 ? "" : "s"} · {u.created_at.slice(0, 10)}
+                    {u.profile_count} profile{u.profile_count === 1 ? "" : "s"} · {u.created_at.slice(0, 10)} ·{" "}
+                    {u.default_delay_seconds !== null ? `${u.default_delay_seconds}s delay` : "default delay"}
                   </div>
                 </div>
                 <span
@@ -231,6 +243,16 @@ export function Admin() {
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <Button variant="outline" small onClick={() => setStatsUser(u)}>
                   View stats
+                </Button>
+                <Button
+                  variant="outline"
+                  small
+                  onClick={() => {
+                    setDelayEditValue(u.default_delay_seconds ?? defaultDelay);
+                    setDelayEditUser(u);
+                  }}
+                >
+                  Delay
                 </Button>
                 <Button variant="outline" small onClick={() => handleReset(u)}>
                   Reset password
@@ -314,6 +336,43 @@ export function Admin() {
           ) : (
             <div style={{ color: "var(--bad)", fontSize: 13, textAlign: "center", padding: "16px 0" }}>Could not load stats.</div>
           )}
+        </BottomSheet>
+      )}
+
+      {delayEditUser && (
+        <BottomSheet onClose={() => setDelayEditUser(null)}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <AvatarBadge seed={delayEditUser.email} size={40} fontSize={14} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 16, fontWeight: 800, letterSpacing: "-0.02em", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {delayEditUser.email}
+              </div>
+              <div style={{ fontSize: 12, color: "var(--text3)" }}>
+                {delayEditUser.default_delay_seconds !== null
+                  ? `Currently overridden at ${delayEditUser.default_delay_seconds}s`
+                  : `Currently using the app default (${defaultDelay}s)`}
+              </div>
+            </div>
+          </div>
+          <Slider label="This user's default delay" value={delayEditValue} min={0} max={60} step={1} suffix="s" onChange={setDelayEditValue} />
+          <div style={{ display: "flex", gap: 9 }}>
+            {delayEditUser.default_delay_seconds !== null && (
+              <Button
+                variant="outline"
+                onClick={() => setUserDelay.mutate({ id: delayEditUser.id, value: null })}
+                disabled={setUserDelay.isPending}
+              >
+                Use app default
+              </Button>
+            )}
+            <Button
+              variant="secondary"
+              onClick={() => setUserDelay.mutate({ id: delayEditUser.id, value: delayEditValue })}
+              disabled={setUserDelay.isPending}
+            >
+              {setUserDelay.isPending ? "Saving…" : "Save for this user"}
+            </Button>
+          </div>
         </BottomSheet>
       )}
     </div>

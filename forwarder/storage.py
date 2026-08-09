@@ -58,6 +58,7 @@ class UserRow:
     is_active: bool
     must_change_password: bool
     created_at: str
+    default_delay_seconds: float | None = None
 
 
 @dataclass
@@ -290,6 +291,11 @@ class Storage:
                 );
                 """
             )
+            # NULL = use the app-wide default_delay_seconds setting above;
+            # set = this user's Compose always starts at this delay instead.
+            cur.execute(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS default_delay_seconds DOUBLE PRECISION;"
+            )
 
     # ---------------------------------------------------------------- users
 
@@ -321,6 +327,7 @@ class Storage:
             is_active=bool(row["is_active"]),
             must_change_password=bool(row["must_change_password"]),
             created_at=str(row["created_at"]),
+            default_delay_seconds=row["default_delay_seconds"],
         )
 
     def get_user_by_email(self, email: str) -> UserRow | None:
@@ -336,6 +343,12 @@ class Storage:
             cur.execute("SELECT * FROM users WHERE id = %s", (user_id,))
             row = cur.fetchone()
         return self._user_from_row(row) if row else None
+
+    def set_user_default_delay(self, user_id: int, value: float | None) -> None:
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE users SET default_delay_seconds = %s WHERE id = %s", (value, user_id)
+            )
 
     def list_users(self) -> list[UserRow]:
         with self._conn() as conn, conn.cursor() as cur:

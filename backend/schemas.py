@@ -203,6 +203,11 @@ class AdminUserOut(BaseModel):
     is_active: bool
     created_at: str
     profile_count: int
+    default_delay_seconds: float | None
+
+
+class AdminSetUserDelayRequest(BaseModel):
+    default_delay_seconds: float | None = Field(default=None, ge=0)
 
 
 class AdminSetActiveRequest(BaseModel):

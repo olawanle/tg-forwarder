@@ -15,8 +15,10 @@ _DEFAULT_DELAY_KEY = "default_delay_seconds"
 
 @router.get("/settings", response_model=schemas.AppSettingsOut)
 def get_app_settings(
-    _: UserRow = Depends(get_current_user), store: Storage = Depends(get_store)
+    user: UserRow = Depends(get_current_user), store: Storage = Depends(get_store)
 ):
+    if user.default_delay_seconds is not None:
+        return schemas.AppSettingsOut(default_delay_seconds=user.default_delay_seconds)
     raw = store.get_setting(_DEFAULT_DELAY_KEY)
     value = float(raw) if raw is not None else get_settings().default_delay_seconds
     return schemas.AppSettingsOut(default_delay_seconds=value)

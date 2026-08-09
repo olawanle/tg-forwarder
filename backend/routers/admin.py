@@ -33,9 +33,32 @@ def list_users(_: UserRow = Depends(require_admin), store: Storage = Depends(get
                 is_active=u.is_active,
                 created_at=u.created_at,
                 profile_count=len(profiles),
+                default_delay_seconds=u.default_delay_seconds,
             )
         )
     return out
+
+
+@router.patch("/users/{user_id}/default-delay", response_model=schemas.AdminUserOut)
+def set_user_default_delay(
+    user_id: int,
+    body: schemas.AdminSetUserDelayRequest,
+    _: UserRow = Depends(require_admin),
+    store: Storage = Depends(get_store),
+):
+    user = store.get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    store.set_user_default_delay(user_id, body.default_delay_seconds)
+    return schemas.AdminUserOut(
+        id=user.id,
+        email=user.email,
+        role=user.role,
+        is_active=user.is_active,
+        created_at=user.created_at,
+        profile_count=len(store.list_profiles_for_user(user_id)),
+        default_delay_seconds=body.default_delay_seconds,
+    )
 
 
 @router.post("/users", response_model=schemas.AdminCreateUserResponse)

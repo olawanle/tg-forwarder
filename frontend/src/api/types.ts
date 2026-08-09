@@ -92,6 +92,7 @@ export interface AdminUser {
   is_active: boolean;
   created_at: string;
   profile_count: number;
+  default_delay_seconds: number | null;
 }
 
 export interface TrendPoint {

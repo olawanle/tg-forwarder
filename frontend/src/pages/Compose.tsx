@@ -33,6 +33,7 @@ export function Compose() {
   const [scheduledAt, setScheduledAt] = useState(() => toLocalInputValue(new Date(Date.now() + 30 * 60 * 1000)));
   const [error, setError] = useState("");
   const [saveNotice, setSaveNotice] = useState("");
+  const [staleNotice, setStaleNotice] = useState("");
 
   const profileId = activeProfile?.id;
 
@@ -83,6 +84,38 @@ export function Compose() {
     queryFn: () => api.get<SavedMessage[]>(`/profiles/${profileId}/saved-messages`),
     enabled: false,
   });
+
+  // Saved-message selections are IDs persisted on the profile's draft. If
+  // the user later deletes or untags one of those messages in Telegram, its
+  // ID would otherwise linger invisibly in savedIds forever (not rendered,
+  // since it's absent from the fetched list — but still sent to the backend
+  // and rotated into, causing real send errors). Fetch the live tagged list
+  // once on entering saved mode with an existing selection, and prune
+  // savedIds to whatever's actually still valid whenever that list loads.
+  const autoFetchedSaved = useRef<number | null>(null);
+  useEffect(() => {
+    if (mode !== "saved" || !profileId || savedIds.length === 0) return;
+    if (autoFetchedSaved.current === profileId) return;
+    autoFetchedSaved.current = profileId;
+    savedMessages.refetch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, profileId, savedIds.length]);
+
+  useEffect(() => {
+    if (!savedMessages.data) return;
+    const validIds = new Set(savedMessages.data.map((m) => m.id));
+    setSavedIds((prev) => {
+      const next = prev.filter((id) => validIds.has(id));
+      if (next.length !== prev.length) {
+        setStaleNotice(
+          prev.length - next.length === 1
+            ? "1 previously selected message is no longer tagged in Telegram and was removed from your selection."
+            : `${prev.length - next.length} previously selected messages are no longer tagged in Telegram and were removed from your selection.`,
+        );
+      }
+      return next;
+    });
+  }, [savedMessages.data]);
 
   const selection = useQuery({
     queryKey: ["discord-selection", profileId],
@@ -274,6 +307,11 @@ export function Compose() {
             Write it in Telegram's Saved Messages with full formatting, react with any emoji to tag it, then pick it
             here. Select more than one to rotate between them across a broadcast.
           </div>
+          {staleNotice && (
+            <div style={{ display: "flex", gap: 9, alignItems: "flex-start", background: "var(--warn-soft)", borderRadius: 18, padding: "12px 14px" }}>
+              <span style={{ fontSize: 12.5, lineHeight: 1.5, color: "var(--text2)" }}>{staleNotice}</span>
+            </div>
+          )}
           <Button
             variant="outline"
             onClick={() => savedMessages.refetch()}
