@@ -1,3 +1,7 @@
+export interface AppSettings {
+  default_delay_seconds: number;
+}
+
 export interface LoginResponse {
   token: string;
   user_id: number;

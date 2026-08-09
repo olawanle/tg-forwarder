@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class LoginRequest(BaseModel):
@@ -123,9 +123,17 @@ class BroadcastStartRequest(BaseModel):
     messages: list[str] | None = None  # 2+ = rotate across targets
     source_message_ids: list[int] | None = None  # 2+ = rotate across targets
     scheduled_at: str | None = None  # ISO datetime, future — None = send now
-    delay_seconds: float = 3.0
+    delay_seconds: float = Field(default=3.0, ge=0)
     max_slowmode_wait: int = 300
     include_discord: bool = False
+
+
+class AppSettingsOut(BaseModel):
+    default_delay_seconds: float
+
+
+class AppSettingsUpdateRequest(BaseModel):
+    default_delay_seconds: float = Field(ge=0)
 
 
 class JobOut(BaseModel):

@@ -279,6 +279,17 @@ class Storage:
                     WHERE status = 'scheduled';
                 """
             )
+            # Generic key-value store for admin-configurable settings (e.g.
+            # default_delay_seconds) that shouldn't need an env var + redeploy
+            # to change.
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS app_settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                );
+                """
+            )
 
     # ---------------------------------------------------------------- users
 
@@ -460,6 +471,24 @@ class Storage:
             )
             rows = cur.fetchall()
         return [self._profile_from_row(r) for r in rows]
+
+    # ---------------------------------------------------------- app_settings
+
+    def get_setting(self, key: str) -> str | None:
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT value FROM app_settings WHERE key = %s", (key,))
+            row = cur.fetchone()
+        return row["value"] if row else None
+
+    def set_setting(self, key: str, value: str) -> None:
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO app_settings(key, value) VALUES (%s, %s)
+                ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+                """,
+                (key, value),
+            )
 
     def delete_profile(self, profile_id: int) -> None:
         # jobs/send_log/telegram_skips/discord_selected_channels all have

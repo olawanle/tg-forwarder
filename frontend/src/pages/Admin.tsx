@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { GlassCard } from "../components/GlassCard";
@@ -7,8 +7,9 @@ import { Button } from "../components/Button";
 import { Field, Input } from "../components/Field";
 import { SegmentedTabs, ToggleSwitch, AvatarBadge } from "../components/Small";
 import { BottomSheet } from "../components/BottomSheet";
+import { Slider } from "../components/Slider";
 import { api, ApiError } from "../api/client";
-import type { AdminUser, AdminUserStats } from "../api/types";
+import type { AdminUser, AdminUserStats, AppSettings } from "../api/types";
 
 export function Admin() {
   const navigate = useNavigate();
@@ -63,6 +64,24 @@ export function Admin() {
     }
   }
 
+  const appSettings = useQuery({
+    queryKey: ["app-settings"],
+    queryFn: () => api.get<AppSettings>("/settings"),
+  });
+  const [defaultDelay, setDefaultDelay] = useState(3);
+  const [delaySaveNotice, setDelaySaveNotice] = useState("");
+  useEffect(() => {
+    if (appSettings.data) setDefaultDelay(appSettings.data.default_delay_seconds);
+  }, [appSettings.data]);
+  const saveDefaultDelay = useMutation({
+    mutationFn: () => api.put<AppSettings>("/admin/settings", { default_delay_seconds: defaultDelay }),
+    onSuccess: () => {
+      setDelaySaveNotice("Saved — new broadcasts will start with this delay.");
+      qc.invalidateQueries({ queryKey: ["app-settings"] });
+    },
+    onError: () => setDelaySaveNotice("Could not save."),
+  });
+
   const [statsUser, setStatsUser] = useState<AdminUser | null>(null);
   const userStats = useQuery({
     queryKey: ["admin-user-stats", statsUser?.id],
@@ -83,6 +102,33 @@ export function Admin() {
           </svg>
         </IconButton>
       </div>
+
+      <GlassCard>
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: "-0.02em" }}>Default send delay</div>
+            <div style={{ fontSize: 12.5, color: "var(--text3)", marginTop: 3, lineHeight: 1.4 }}>
+              What Compose starts new broadcasts at. Users can still change it per-broadcast — this
+              just sets the starting point, down to 0s for anyone who doesn't want the 3s default.
+            </div>
+          </div>
+          <Slider label="Default delay" value={defaultDelay} min={0} max={60} step={1} suffix="s" onChange={setDefaultDelay} />
+          {delaySaveNotice && (
+            <div style={{ fontSize: 12.5, color: "var(--ok)", fontWeight: 600 }}>{delaySaveNotice}</div>
+          )}
+          <Button
+            variant="outline"
+            small
+            onClick={() => {
+              setDelaySaveNotice("");
+              saveDefaultDelay.mutate();
+            }}
+            disabled={saveDefaultDelay.isPending}
+          >
+            {saveDefaultDelay.isPending ? "Saving…" : "Save default"}
+          </Button>
+        </div>
+      </GlassCard>
 
       <GlassCard>
         <div style={{ display: "flex", flexDirection: "column", gap: 13 }}>

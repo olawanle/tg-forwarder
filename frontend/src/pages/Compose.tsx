@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { GlassCard } from "../components/GlassCard";
@@ -8,7 +8,7 @@ import { SegmentedTabs, ToggleSwitch } from "../components/Small";
 import { Slider } from "../components/Slider";
 import { useProfiles } from "../profile/ProfileContext";
 import { api, ApiError } from "../api/client";
-import type { Job, SavedMessage } from "../api/types";
+import type { AppSettings, Job, SavedMessage } from "../api/types";
 
 type Mode = "text" | "saved";
 const MAX_VARIANTS = 5;
@@ -53,6 +53,18 @@ export function Compose() {
           : [],
     );
   }, [activeProfile?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const defaultDelay = useQuery({
+    queryKey: ["app-settings"],
+    queryFn: () => api.get<AppSettings>("/settings"),
+    staleTime: 5 * 60 * 1000,
+  });
+  const appliedDefaultDelay = useRef(false);
+  useEffect(() => {
+    if (appliedDefaultDelay.current || defaultDelay.data === undefined) return;
+    appliedDefaultDelay.current = true;
+    setDelay(defaultDelay.data.default_delay_seconds);
+  }, [defaultDelay.data]);
 
   const activeJob = useQuery({
     queryKey: ["active-job", profileId],
@@ -319,7 +331,7 @@ export function Compose() {
 
       <GlassCard>
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <Slider label="Delay between sends" value={delay} min={3} max={60} step={1} suffix="s" onChange={setDelay} />
+          <Slider label="Delay between sends" value={delay} min={0} max={60} step={1} suffix="s" onChange={setDelay} />
           <Slider
             label="Max slowmode wait"
             value={maxSlow}

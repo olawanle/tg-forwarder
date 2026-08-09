@@ -9,7 +9,7 @@ from forwarder.job_runner import get_job_runner
 from forwarder.storage import Storage
 
 from backend.config import CORS_ORIGINS
-from backend.routers import admin, auth, compose, profiles, progress, targets
+from backend.routers import admin, auth, compose, profiles, progress, settings, targets
 
 app = FastAPI(title="Group Forwarder API")
 
@@ -29,6 +29,7 @@ app.include_router(targets.router)
 app.include_router(compose.router)
 app.include_router(progress.router)
 app.include_router(admin.router)
+app.include_router(settings.router)
 
 
 @app.on_event("startup")
