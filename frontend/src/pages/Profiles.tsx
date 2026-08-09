@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { GlassCard } from "../components/GlassCard";
 import { AvatarBadge, ToggleSwitch } from "../components/Small";
 import { IconButton } from "../components/Small";
@@ -8,13 +9,35 @@ import { useAuth } from "../auth/AuthContext";
 import { useProfiles } from "../profile/ProfileContext";
 import { useTheme } from "../theme/useTheme";
 import { AddProfileWizard } from "./AddProfileWizard";
+import { api, ApiError } from "../api/client";
+import type { Profile } from "../api/types";
 
 export function Profiles() {
   const navigate = useNavigate();
+  const qc = useQueryClient();
   const { logout, user } = useAuth();
   const { profiles, activeProfile, setActiveProfileId, isLoading } = useProfiles();
   const [wizardOpen, setWizardOpen] = useState(false);
+  const [reconnectProfile, setReconnectProfile] = useState<Profile | null>(null);
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const [deleteError, setDeleteError] = useState("");
   const { theme, toggle } = useTheme();
+
+  async function removeProfile(p: Profile) {
+    if (!window.confirm(`Remove "${p.label}"? This also deletes its send history and job logs — this can't be undone.`)) {
+      return;
+    }
+    setDeleteError("");
+    setBusyId(p.id);
+    try {
+      await api.del(`/profiles/${p.id}`);
+      qc.invalidateQueries({ queryKey: ["profiles"] });
+    } catch (err) {
+      setDeleteError(err instanceof ApiError ? err.message : "Could not remove this profile.");
+    } finally {
+      setBusyId(null);
+    }
+  }
 
   return (
     <div className="page page--no-nav">
@@ -89,21 +112,79 @@ export function Profiles() {
                   </svg>
                 </span>
               )}
+              <button
+                type="button"
+                aria-label={`Reconnect ${p.label}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setReconnectProfile(p);
+                }}
+                disabled={busyId === p.id}
+                style={{
+                  width: 34,
+                  height: 34,
+                  borderRadius: 11,
+                  background: "var(--glass-2)",
+                  border: "none",
+                  display: "grid",
+                  placeItems: "center",
+                  cursor: "pointer",
+                  flexShrink: 0,
+                  color: "var(--text2)",
+                }}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+                  <path d="M21 3v6h-6" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                aria-label={`Remove ${p.label}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  removeProfile(p);
+                }}
+                disabled={busyId === p.id}
+                style={{
+                  width: 34,
+                  height: 34,
+                  borderRadius: 11,
+                  background: "var(--bad-soft)",
+                  border: "none",
+                  display: "grid",
+                  placeItems: "center",
+                  cursor: "pointer",
+                  flexShrink: 0,
+                  color: "var(--bad)",
+                }}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m3 0-.8 13.6a2 2 0 0 1-2 1.9H7.8a2 2 0 0 1-2-1.9L5 6" />
+                </svg>
+              </button>
             </div>
           </GlassCard>
         ))
       )}
 
+      {deleteError && <div style={{ color: "var(--bad)", fontSize: 13, fontWeight: 600, padding: "0 4px" }}>{deleteError}</div>}
+
       <Button variant="outline" onClick={() => setWizardOpen(true)}>
         + Add a Telegram profile
       </Button>
 
-      {wizardOpen && (
+      {(wizardOpen || reconnectProfile) && (
         <AddProfileWizard
-          onClose={() => setWizardOpen(false)}
+          reconnectProfile={reconnectProfile ? { id: reconnectProfile.id, label: reconnectProfile.label } : undefined}
+          onClose={() => {
+            setWizardOpen(false);
+            setReconnectProfile(null);
+          }}
           onDone={(profileId) => {
             setActiveProfileId(profileId);
             setWizardOpen(false);
+            setReconnectProfile(null);
           }}
         />
       )}

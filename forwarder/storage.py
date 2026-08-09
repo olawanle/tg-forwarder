@@ -461,6 +461,12 @@ class Storage:
             rows = cur.fetchall()
         return [self._profile_from_row(r) for r in rows]
 
+    def delete_profile(self, profile_id: int) -> None:
+        # jobs/send_log/telegram_skips/discord_selected_channels all have
+        # ON DELETE CASCADE on profile_id, so this is the only query needed.
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute("DELETE FROM profiles WHERE id = %s", (profile_id,))
+
     def update_profile_session(self, profile_id: int, telegram_session: str) -> None:
         enc = crypto.encrypt(telegram_session)
         with self._conn() as conn, conn.cursor() as cur:

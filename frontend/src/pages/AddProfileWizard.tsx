@@ -10,12 +10,13 @@ type Step = "phone" | "code" | "password" | "paste";
 interface Props {
   onClose: () => void;
   onDone: (profileId: number) => void;
+  reconnectProfile?: { id: number; label: string };
 }
 
-export function AddProfileWizard({ onClose, onDone }: Props) {
+export function AddProfileWizard({ onClose, onDone, reconnectProfile }: Props) {
   const qc = useQueryClient();
   const [step, setStep] = useState<Step>("phone");
-  const [label, setLabel] = useState("");
+  const [label, setLabel] = useState(reconnectProfile?.label ?? "");
   const [phone, setPhone] = useState("");
   const [code, setCode] = useState("");
   const [password, setPassword] = useState("");
@@ -40,6 +41,7 @@ export function AddProfileWizard({ onClose, onDone }: Props) {
       const res = await api.post<{ wizard_token: string }>("/profiles/phone/send-code", {
         label: label.trim(),
         phone: phone.trim(),
+        profile_id: reconnectProfile?.id,
       });
       setWizardToken(res.wizard_token);
       setStep("code");
@@ -97,6 +99,7 @@ export function AddProfileWizard({ onClose, onDone }: Props) {
       const res = await api.post<{ id: number }>("/profiles/session", {
         label: label.trim(),
         session_string: sessionString.trim(),
+        profile_id: reconnectProfile?.id,
       });
       finish(res.id);
     } catch (err) {
@@ -132,14 +135,22 @@ export function AddProfileWizard({ onClose, onDone }: Props) {
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <div>
             <div style={{ fontSize: 21, fontWeight: 800, letterSpacing: "-0.03em" }}>
-              Add a profile
+              {reconnectProfile ? "Reconnect profile" : "Add a profile"}
             </div>
             <div style={{ fontSize: 13, color: "var(--text2)", marginTop: 5, lineHeight: 1.45 }}>
-              Same flow Telegram uses for any new device — no computer needed.
+              {reconnectProfile
+                ? "Log back in for this profile — its history and stats stay exactly as they are."
+                : "Same flow Telegram uses for any new device — no computer needed."}
             </div>
           </div>
           <Field label="Profile name">
-            <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. My main account" autoFocus />
+            <Input
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              placeholder="e.g. My main account"
+              autoFocus={!reconnectProfile}
+              disabled={!!reconnectProfile}
+            />
           </Field>
           <Field label="Phone number">
             <Input
@@ -237,7 +248,12 @@ export function AddProfileWizard({ onClose, onDone }: Props) {
             </div>
           </div>
           <Field label="Profile name">
-            <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. My main account" />
+            <Input
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              placeholder="e.g. My main account"
+              disabled={!!reconnectProfile}
+            />
           </Field>
           <Field label="Session string">
             <Input

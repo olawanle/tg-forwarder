@@ -36,6 +36,7 @@ class ProfileOut(BaseModel):
 class CreateProfileSessionRequest(BaseModel):
     label: str
     session_string: str
+    profile_id: int | None = None  # set to reconnect an existing profile in place
 
 
 class UpdateSessionRequest(BaseModel):
@@ -45,6 +46,7 @@ class UpdateSessionRequest(BaseModel):
 class PhoneSendCodeRequest(BaseModel):
     label: str
     phone: str
+    profile_id: int | None = None  # set to reconnect an existing profile in place
 
 
 class PhoneSendCodeResponse(BaseModel):

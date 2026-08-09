@@ -34,8 +34,28 @@ def create_profile_with_session(
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST, "Label and session string are required."
         )
+    if body.profile_id is not None:
+        existing = store.get_profile(body.profile_id)
+        if not existing or existing.user_id != user.id:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Profile not found")
+        store.update_profile_session(body.profile_id, body.session_string.strip())
+        return profile_out(store.get_profile(body.profile_id))
     profile_id = store.create_profile(user.id, body.label.strip(), body.session_string.strip())
     return profile_out(store.get_profile(profile_id))
+
+
+@router.delete("/{profile_id}")
+def delete_profile(
+    profile: ProfileRow = Depends(get_owned_profile),
+    store: Storage = Depends(get_store),
+):
+    if store.get_active_job(profile.id):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "This profile has a broadcast in progress — cancel it first.",
+        )
+    store.delete_profile(profile.id)
+    return {"ok": True}
 
 
 @router.patch("/{profile_id}/session")
@@ -63,6 +83,13 @@ async def phone_send_code(
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST, "Label and phone number are required."
         )
+    reconnect_profile_id: int | None = None
+    if body.profile_id is not None:
+        store = Storage(settings.database_url)
+        existing = store.get_profile(body.profile_id)
+        if not existing or existing.user_id != user.id:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Profile not found")
+        reconnect_profile_id = body.profile_id
     tmp = TelegramService(settings.telegram_api_id, settings.telegram_api_hash, "")
     try:
         phone_code_hash, session = await tmp.request_code(body.phone.strip())
@@ -76,6 +103,7 @@ async def phone_send_code(
         "session": session,
         "phone_code_hash": phone_code_hash,
         "created": time.time(),
+        "reconnect_profile_id": reconnect_profile_id,
     }
     return schemas.PhoneSendCodeResponse(wizard_token=token)
 
@@ -100,7 +128,12 @@ async def phone_verify_code(
     state["session"] = session
     if needs_password:
         return schemas.PhoneVerifyCodeResponse(needs_password=True)
-    profile_id = store.create_profile(user.id, state["label"], session)
+    reconnect_id = state.get("reconnect_profile_id")
+    if reconnect_id is not None:
+        store.update_profile_session(reconnect_id, session)
+        profile_id = reconnect_id
+    else:
+        profile_id = store.create_profile(user.id, state["label"], session)
     WIZARD_STORE.pop(body.wizard_token, None)
     return schemas.PhoneVerifyCodeResponse(needs_password=False, profile_id=profile_id)
 
@@ -120,6 +153,11 @@ async def phone_verify_password(
         session = await tmp.submit_password(body.password)
     except Exception as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Incorrect password: {exc}"[:300])
-    profile_id = store.create_profile(user.id, state["label"], session)
+    reconnect_id = state.get("reconnect_profile_id")
+    if reconnect_id is not None:
+        store.update_profile_session(reconnect_id, session)
+        profile_id = reconnect_id
+    else:
+        profile_id = store.create_profile(user.id, state["label"], session)
     WIZARD_STORE.pop(body.wizard_token, None)
     return schemas.PhoneVerifyPasswordResponse(profile_id=profile_id)
