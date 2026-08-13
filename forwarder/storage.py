@@ -811,6 +811,23 @@ class Storage:
             row = cur.fetchone()
         return self._job_from_row(row) if row else None
 
+    def list_stuck_jobs(self, stale_seconds: int = 90) -> list[JobRow]:
+        """queued/running jobs that haven't been touched in a while — a
+        healthy job updates its row on every send, so staleness this long
+        means no worker is actually processing it anymore."""
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT * FROM jobs
+                WHERE status IN ('queued', 'running')
+                  AND updated_at < now() - (%s || ' seconds')::interval
+                ORDER BY id ASC
+                """,
+                (stale_seconds,),
+            )
+            rows = cur.fetchall()
+        return [self._job_from_row(r) for r in rows]
+
     def get_latest_job(self, profile_id: int) -> JobRow | None:
         with self._conn() as conn, conn.cursor() as cur:
             cur.execute(

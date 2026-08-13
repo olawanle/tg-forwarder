@@ -132,6 +132,7 @@ class JobRunner:
         store = Storage(settings.database_url)
         while True:
             try:
+                self._reap_stuck_jobs(store)
                 for job in store.list_due_scheduled_jobs():
                     if self.is_worker_alive(job.profile_id):
                         continue  # profile busy — picked up on a later tick
@@ -143,6 +144,27 @@ class JobRunner:
             except Exception:
                 log.exception("Scheduler tick failed")
             time.sleep(20)
+
+    def _reap_stuck_jobs(self, store: Storage) -> None:
+        """A job can be left at queued/running in the database with no
+        worker thread actually processing it — e.g. if _run_job's own thread
+        died from something outside its try/except before that was hardened,
+        or from a redeploy race. That's a real bug users hit: 'a broadcast is
+        already running' forever, blocking every future start for that
+        profile, even though nothing is actually sending. Self-heal by
+        treating any such job as orphaned and running it through the exact
+        same interrupt-then-resume path a normal process restart already
+        uses — no redeploy required to recover."""
+        for job in store.list_stuck_jobs():
+            if self.is_worker_alive(job.profile_id):
+                continue
+            store.update_job(
+                job.id, status="interrupted", current_detail="Recovered a stalled job"
+            )
+            profile = store.get_profile(job.profile_id)
+            session = profile.telegram_session if profile else ""
+            if session:
+                self.resume_interrupted(job.profile_id, store, session)
 
     def _launch_scheduled(
         self, job_id: int, profile_id: int, telegram_session: str, store: Storage
@@ -224,13 +246,14 @@ class JobRunner:
     ) -> None:
         settings = get_settings()
         store = Storage(settings.database_url)
-        profile = store.get_profile(profile_id)
-        api_id = (profile.telegram_api_id if profile and profile.telegram_api_id else settings.telegram_api_id)
-        api_hash = (profile.telegram_api_hash if profile and profile.telegram_api_hash else settings.telegram_api_hash)
-        tg = TelegramService(api_id, api_hash, telegram_session)
-        dc = DiscordService(settings.discord_bot_token)
 
         try:
+            profile = store.get_profile(profile_id)
+            api_id = (profile.telegram_api_id if profile and profile.telegram_api_id else settings.telegram_api_id)
+            api_hash = (profile.telegram_api_hash if profile and profile.telegram_api_hash else settings.telegram_api_hash)
+            tg = TelegramService(api_id, api_hash, telegram_session)
+            dc = DiscordService(settings.discord_bot_token)
+
             store.update_job(
                 job_id,
                 status="running",
