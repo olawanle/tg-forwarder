@@ -8,13 +8,14 @@ from forwarder.storage import ProfileRow, Storage
 
 from backend import schemas
 from backend.deps import get_owned_profile, get_store
-from backend.tg import build_telegram_service
+from backend.tg import build_telegram_service, ensure_profile_not_broadcasting
 
 router = APIRouter(prefix="/profiles/{profile_id}", tags=["targets"])
 
 
 @router.get("/status")
 async def status_(profile: ProfileRow = Depends(get_owned_profile)):
+    ensure_profile_not_broadcasting(profile)
     return await build_telegram_service(profile).status()
 
 
@@ -22,6 +23,7 @@ async def status_(profile: ProfileRow = Depends(get_owned_profile)):
 async def groups(
     profile: ProfileRow = Depends(get_owned_profile), store: Storage = Depends(get_store)
 ):
+    ensure_profile_not_broadcasting(profile)
     skips = store.get_telegram_skips(profile.id)
     try:
         targets = await build_telegram_service(profile).list_groups(skip_ids=set(skips.keys()))
@@ -68,6 +70,7 @@ async def leave_groups(
     profile: ProfileRow = Depends(get_owned_profile),
     store: Storage = Depends(get_store),
 ):
+    ensure_profile_not_broadcasting(profile)
     skips = store.get_telegram_skips(profile.id)
     ids = body.target_ids if body.target_ids else list(skips.keys())
     targets = [{"id": tid, "name": skips.get(tid, {}).get("name", tid)} for tid in ids]

@@ -8,13 +8,14 @@ from forwarder.storage import ProfileRow, Storage
 from backend import schemas
 from backend.converters import job_out
 from backend.deps import get_owned_profile, get_store
-from backend.tg import build_telegram_service
+from backend.tg import build_telegram_service, ensure_profile_not_broadcasting
 
 router = APIRouter(prefix="/profiles/{profile_id}", tags=["compose"])
 
 
 @router.get("/saved-messages", response_model=list[schemas.SavedMessageOut])
 async def saved_messages(profile: ProfileRow = Depends(get_owned_profile)):
+    ensure_profile_not_broadcasting(profile)
     try:
         options = await build_telegram_service(profile).list_tagged_saved_messages()
     except Exception as exc:

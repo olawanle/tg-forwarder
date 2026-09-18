@@ -174,6 +174,8 @@ function BlacklistTab({ profileId }: { profileId: number }) {
         setNotice(`Failed to leave: ${res.failed[0].detail}`);
       }
       qc.invalidateQueries({ queryKey: ["skips", profileId] });
+    } catch (err) {
+      setNotice(err instanceof ApiError ? err.message : "Could not leave this group.");
     } finally {
       setBusy(false);
     }

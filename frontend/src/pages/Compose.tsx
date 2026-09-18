@@ -312,6 +312,11 @@ export function Compose() {
               <span style={{ fontSize: 12.5, lineHeight: 1.5, color: "var(--text2)" }}>{staleNotice}</span>
             </div>
           )}
+          {savedMessages.error && (
+            <div style={{ color: "var(--bad)", fontSize: 12.5, fontWeight: 600, padding: "0 4px" }}>
+              {savedMessages.error instanceof ApiError ? savedMessages.error.message : "Could not load saved messages."}
+            </div>
+          )}
           <Button
             variant="outline"
             onClick={() => savedMessages.refetch()}
