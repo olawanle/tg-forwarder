@@ -297,99 +297,10 @@ class JobRunner:
             delay = float(job.delay_seconds)
             max_slow = int(job.max_slowmode_wait)
 
-            while True:
-                if stop.is_set():
-                    store.update_job(
-                        job_id,
-                        status="cancelled",
-                        current_detail="Cancelled by user",
-                    )
-                    return
-
-                job = store.get_job(job_id)
-                if not job:
-                    return
-                pending = list(job.pending or [])
-                if not pending:
-                    break
-
-                # Rotation, keyed off the persisted done-count so it's
-                # correct across a resume too. Empty lists (jobs created
-                # before this feature, or single-message jobs) fall back to
-                # the original single message/source_message_id untouched.
-                if job.messages:
-                    message = job.messages[job.done % len(job.messages)]
-                else:
-                    message = job.message
-                if job.source_message_ids:
-                    source_message_id = job.source_message_ids[job.done % len(job.source_message_ids)]
-                else:
-                    source_message_id = job.source_message_id
-
-                target = pending[0]
-                remaining = pending[1:]
-                name = target.get("name") or target.get("id")
-                store.update_job(
-                    job_id,
-                    current_name=str(name),
-                    current_detail=(
-                        f"Sending ({job.done + 1}/{job.total or (len(pending) + job.done)})…"
-                    ),
-                )
-
-                try:
-                    result = asyncio.run(
-                        tg.send_to_group(
-                            message,
-                            str(target["id"]),
-                            str(name),
-                            max_slowmode_wait=max_slow,
-                            verify_seconds=1.5,
-                            source_message_id=source_message_id,
-                        )
-                    )
-                except Exception as exc:
-                    from forwarder.telegram_service import SendResult
-
-                    result = SendResult(
-                        str(target["id"]),
-                        str(name),
-                        "error",
-                        str(exc)[:300],
-                    )
-
-                self._record(
-                    store,
-                    job_id,
-                    profile_id,
-                    "telegram",
-                    result.target_id,
-                    result.target_name,
-                    result.status,
-                    result.detail,
-                )
-                job = store.get_job(job_id)
-                done = (job.done if job else 0) + 1
-                total = job.total if job and job.total else done + len(remaining)
-                store.update_job(
-                    job_id,
-                    done=done,
-                    total=total,
-                    pending=remaining,
-                    current_detail=f"{result.status}: {result.detail}"[:240],
-                )
-
-                if remaining and delay > 0 and not stop.is_set():
-                    end = time.time() + delay
-                    while time.time() < end:
-                        if stop.is_set():
-                            store.update_job(
-                                job_id,
-                                status="cancelled",
-                                current_detail="Cancelled by user",
-                            )
-                            return
-                        time.sleep(min(0.5, max(0.0, end - time.time())))
+            if job.pending:
+                asyncio.run(self._send_pending(tg, store, job_id, profile_id, stop, delay, max_slow))
+            if stop.is_set():
+                return
 
             # Optional Discord after Telegram
             job = store.get_job(job_id)
@@ -466,6 +377,113 @@ class JobRunner:
                 worker = self._workers.get(profile_id)
                 if worker and worker.active_job_id == job_id:
                     del self._workers[profile_id]
+
+    async def _send_pending(
+        self,
+        tg: TelegramService,
+        store: Storage,
+        job_id: int,
+        profile_id: int,
+        stop: threading.Event,
+        delay: float,
+        max_slow: int,
+    ) -> None:
+        """One Telegram connection, reused for every target still pending in
+        this job — see TelegramService.connect_client's docstring for why
+        reconnecting per target (the previous behavior here) was both slow
+        and prone to 'wrong session ID' errors."""
+        client = await tg.connect_client()
+        try:
+            while True:
+                if stop.is_set():
+                    store.update_job(job_id, status="cancelled", current_detail="Cancelled by user")
+                    return
+
+                job = store.get_job(job_id)
+                if not job:
+                    return
+                pending = list(job.pending or [])
+                if not pending:
+                    return
+
+                # Rotation, keyed off the persisted done-count so it's
+                # correct across a resume too. Empty lists (jobs created
+                # before this feature, or single-message jobs) fall back to
+                # the original single message/source_message_id untouched.
+                if job.messages:
+                    message = job.messages[job.done % len(job.messages)]
+                else:
+                    message = job.message
+                if job.source_message_ids:
+                    source_message_id = job.source_message_ids[job.done % len(job.source_message_ids)]
+                else:
+                    source_message_id = job.source_message_id
+
+                target = pending[0]
+                remaining = pending[1:]
+                name = target.get("name") or target.get("id")
+                store.update_job(
+                    job_id,
+                    current_name=str(name),
+                    current_detail=(
+                        f"Sending ({job.done + 1}/{job.total or (len(pending) + job.done)})…"
+                    ),
+                )
+
+                try:
+                    result = await tg.send_one_over(
+                        client,
+                        str(target["id"]),
+                        str(name),
+                        message,
+                        max_slowmode_wait=max_slow,
+                        verify_seconds=1.5,
+                        source_message_id=source_message_id,
+                    )
+                except Exception as exc:
+                    from forwarder.telegram_service import SendResult
+
+                    result = SendResult(
+                        str(target["id"]),
+                        str(name),
+                        "error",
+                        str(exc)[:300],
+                    )
+
+                self._record(
+                    store,
+                    job_id,
+                    profile_id,
+                    "telegram",
+                    result.target_id,
+                    result.target_name,
+                    result.status,
+                    result.detail,
+                )
+                job = store.get_job(job_id)
+                done = (job.done if job else 0) + 1
+                total = job.total if job and job.total else done + len(remaining)
+                store.update_job(
+                    job_id,
+                    done=done,
+                    total=total,
+                    pending=remaining,
+                    current_detail=f"{result.status}: {result.detail}"[:240],
+                )
+
+                if remaining and delay > 0 and not stop.is_set():
+                    end = time.time() + delay
+                    while time.time() < end:
+                        if stop.is_set():
+                            store.update_job(
+                                job_id,
+                                status="cancelled",
+                                current_detail="Cancelled by user",
+                            )
+                            return
+                        await asyncio.sleep(min(0.5, max(0.0, end - time.time())))
+        finally:
+            await client.disconnect()
 
     def _record(
         self,

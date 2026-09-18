@@ -475,7 +475,11 @@ class TelegramService:
         verify_seconds: float = 1.5,
         source_message_id: int | None = None,
     ) -> SendResult:
-        """Connect, send to one group, disconnect. Used for live Streamlit progress.
+        """Connect, send to one group, disconnect. For a single one-off send.
+
+        Bulk broadcasts must NOT call this per target -- see connect_client()
+        / send_one_over() below, which reuse one connection across the whole
+        job instead of a fresh MTProto handshake per target.
 
         If source_message_id is given, forwards that Saved Messages entry
         instead of sending `message` as plain text (message may be empty)."""
@@ -497,6 +501,48 @@ class TelegramService:
             )
         finally:
             await client.disconnect()
+
+    async def connect_client(self) -> TelegramClient:
+        """For a bulk broadcast: one connection reused across every target in
+        the job, instead of send_to_group's reconnect-per-call. Caller owns
+        the returned client and must client.disconnect() it when done (see
+        job_runner._send_pending). Reconnecting per target -- what this
+        service used to do for every send in a broadcast -- means hundreds or
+        thousands of fresh MTProto handshakes on the same session back to
+        back, which is both slow on its own and prone to Telegram replying
+        with a stale/mismatched session ID when the previous connection
+        hasn't finished tearing down server-side before the next one
+        reconnects with the same auth key."""
+        client = self._client()
+        await client.connect()
+        if not await client.is_user_authorized():
+            await client.disconnect()
+            raise RuntimeError("Telegram session is not authorized")
+        return client
+
+    async def send_one_over(
+        self,
+        client: TelegramClient,
+        target_id: str,
+        name: str,
+        message: str,
+        max_slowmode_wait: int = 300,
+        verify_seconds: float = 1.5,
+        source_message_id: int | None = None,
+    ) -> SendResult:
+        """Send to one group over an already-connected client from
+        connect_client() -- the bulk-broadcast counterpart to send_to_group."""
+        if source_message_id is None and not message.strip():
+            raise ValueError("Message is empty")
+        return await self._send_one(
+            client,
+            target_id,
+            name,
+            message,
+            max_slowmode_wait=max_slowmode_wait,
+            verify_seconds=verify_seconds,
+            source_message_id=source_message_id,
+        )
 
     async def leave_groups(
         self, targets: list[dict], delay_seconds: float = 2.0
