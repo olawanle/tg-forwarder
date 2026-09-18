@@ -391,8 +391,22 @@ class JobRunner:
         """One Telegram connection, reused for every target still pending in
         this job — see TelegramService.connect_client's docstring for why
         reconnecting per target (the previous behavior here) was both slow
-        and prone to 'wrong session ID' errors."""
+        and prone to 'wrong session ID' errors.
+
+        Also self-throttles: a 0s (or very low) configured delay doesn't make
+        Telegram accept sends any faster -- it makes the account trip
+        FloodWait/slowmode far more often, and each of those penalties (which
+        _send_one correctly waits out) costs far more real time than a modest
+        proactive gap would have. Real data from recent jobs bore this out
+        directly: jobs run at 0s delay were measured at 15-55+ seconds per
+        target, dominated by throttling penalties, not the configured pace.
+        A FloodWait/slowmode hit (or a generic connection-level error, which
+        is what a 'wrong session ID' collision surfaces as) means the current
+        pace is currently too fast for this account/group -- back off past
+        whatever the user configured, then decay back down once sends are
+        clean again."""
         client = await tg.connect_client()
+        throttle_backoff = 0.0
         try:
             while True:
                 if stop.is_set():
@@ -450,6 +464,20 @@ class JobRunner:
                         str(exc)[:300],
                     )
 
+                # Telegram pushing back (FloodWait/slowmode, or a raw
+                # connection-level error like the 'wrong session ID'
+                # collision -- both land here since neither matches a known
+                # skip reason) means the account is being sent to faster
+                # than Telegram is currently tolerating, independent of
+                # what delay_seconds says. Escalate past the configured
+                # pace so it doesn't keep tripping the same penalty on
+                # every following target; decay back down once sends are
+                # clean again.
+                if result.status in ("error", "skipped_slowmode"):
+                    throttle_backoff = min(max(throttle_backoff, 3.0) * 2, 60.0)
+                elif result.status == "ok":
+                    throttle_backoff = max(0.0, throttle_backoff / 2)
+
                 self._record(
                     store,
                     job_id,
@@ -471,8 +499,9 @@ class JobRunner:
                     current_detail=f"{result.status}: {result.detail}"[:240],
                 )
 
-                if remaining and delay > 0 and not stop.is_set():
-                    end = time.time() + delay
+                effective_delay = max(delay, throttle_backoff)
+                if remaining and effective_delay > 0 and not stop.is_set():
+                    end = time.time() + effective_delay
                     while time.time() < end:
                         if stop.is_set():
                             store.update_job(
