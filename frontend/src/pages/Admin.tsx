@@ -9,7 +9,7 @@ import { SegmentedTabs, ToggleSwitch, AvatarBadge } from "../components/Small";
 import { BottomSheet } from "../components/BottomSheet";
 import { Slider } from "../components/Slider";
 import { api, ApiError } from "../api/client";
-import type { AdminUser, AdminUserStats, AppSettings } from "../api/types";
+import type { AdminUser, AdminUserStats, AppSettings, JobDuration } from "../api/types";
 
 export function Admin() {
   const navigate = useNavigate();
@@ -73,6 +73,11 @@ export function Admin() {
   useEffect(() => {
     if (appSettings.data) setDefaultDelay(appSettings.data.default_delay_seconds);
   }, [appSettings.data]);
+  const jobDurations = useQuery({
+    queryKey: ["job-duration-diagnostics"],
+    queryFn: () => api.get<JobDuration[]>("/admin/diagnostics/job-durations"),
+  });
+
   const saveDefaultDelay = useMutation({
     mutationFn: () => api.put<AppSettings>("/admin/settings", { default_delay_seconds: defaultDelay }),
     onSuccess: () => {
@@ -138,6 +143,58 @@ export function Admin() {
           >
             {saveDefaultDelay.isPending ? "Saving…" : "Save default"}
           </Button>
+        </div>
+      </GlassCard>
+
+      <GlassCard>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: "-0.02em" }}>Recent broadcast durations</div>
+            <div style={{ fontSize: 12.5, color: "var(--text3)", marginTop: 3, lineHeight: 1.4 }}>
+              Sec/target rising with delay unchanged points to Telegram throttling harder, not a setting.
+              Total climbing points to more groups to message.
+            </div>
+          </div>
+          {jobDurations.isLoading ? (
+            <div style={{ color: "var(--text3)", fontSize: 13, textAlign: "center", padding: "12px 0" }}>Loading…</div>
+          ) : (jobDurations.data ?? []).length === 0 ? (
+            <div style={{ color: "var(--text3)", fontSize: 13, textAlign: "center", padding: "12px 0" }}>
+              No completed broadcasts yet.
+            </div>
+          ) : (
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                <thead>
+                  <tr style={{ color: "var(--text3)", textAlign: "left" }}>
+                    <th style={{ padding: "4px 8px 4px 0", fontWeight: 700 }}>Job</th>
+                    <th style={{ padding: "4px 8px", fontWeight: 700 }}>Profile</th>
+                    <th style={{ padding: "4px 8px", fontWeight: 700 }}>Targets</th>
+                    <th style={{ padding: "4px 8px", fontWeight: 700 }}>Delay</th>
+                    <th style={{ padding: "4px 8px", fontWeight: 700 }}>Duration</th>
+                    <th style={{ padding: "4px 0 4px 8px", fontWeight: 700 }}>Sec/target</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(jobDurations.data ?? []).map((j) => (
+                    <tr key={j.id} style={{ borderTop: "1px solid var(--hair)" }}>
+                      <td style={{ padding: "6px 8px 6px 0", fontWeight: 700 }}>#{j.id}</td>
+                      <td style={{ padding: "6px 8px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 90 }}>
+                        {j.profile_label}
+                      </td>
+                      <td style={{ padding: "6px 8px" }}>{j.total}</td>
+                      <td style={{ padding: "6px 8px" }}>{j.delay_seconds}s</td>
+                      <td style={{ padding: "6px 8px" }}>
+                        {j.duration_seconds ? `${Math.round(j.duration_seconds / 60)}m` : "—"}
+                      </td>
+                      <td style={{ padding: "6px 0 6px 8px", fontWeight: 700 }}>
+                        {j.seconds_per_target ?? "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       </GlassCard>
 

@@ -86,6 +86,13 @@ def create_user(
     return schemas.AdminCreateUserResponse(user_id=user_id, temp_password=temp_password)
 
 
+@router.get("/diagnostics/job-durations")
+def job_duration_diagnostics(
+    _: UserRow = Depends(require_admin), store: Storage = Depends(get_store)
+):
+    return store.get_recent_job_durations()
+
+
 @router.patch("/users/{user_id}/active")
 def set_active(
     user_id: int,

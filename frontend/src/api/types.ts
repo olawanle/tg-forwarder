@@ -2,6 +2,20 @@ export interface AppSettings {
   default_delay_seconds: number;
 }
 
+export interface JobDuration {
+  id: number;
+  profile_id: number;
+  profile_label: string;
+  total: number;
+  done: number;
+  delay_seconds: number;
+  max_slowmode_wait: number;
+  created_at: string;
+  updated_at: string;
+  duration_seconds: number | null;
+  seconds_per_target: number | null;
+}
+
 export interface LoginResponse {
   token: string;
   user_id: number;

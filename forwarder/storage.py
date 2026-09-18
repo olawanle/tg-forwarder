@@ -811,6 +811,47 @@ class Storage:
             row = cur.fetchone()
         return self._job_from_row(row) if row else None
 
+    def get_recent_job_durations(self, limit: int = 25) -> list[dict]:
+        """Diagnostic for 'broadcasts are slower than before': per-job target
+        count, configured delay, and wall-clock duration, so a trend of more
+        targets vs. more seconds-per-target (Telegram throttling getting
+        worse) can be told apart from each other at a glance."""
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT j.id, j.profile_id, p.label AS profile_label, j.total, j.done,
+                       j.delay_seconds, j.max_slowmode_wait, j.created_at, j.updated_at,
+                       EXTRACT(EPOCH FROM (j.updated_at - j.created_at)) AS duration_seconds
+                FROM jobs j
+                JOIN profiles p ON p.id = j.profile_id
+                WHERE j.status = 'completed'
+                ORDER BY j.id DESC
+                LIMIT %s
+                """,
+                (limit,),
+            )
+            rows = cur.fetchall()
+        out = []
+        for r in rows:
+            duration = float(r["duration_seconds"]) if r["duration_seconds"] is not None else None
+            total = int(r["total"] or 0)
+            out.append(
+                {
+                    "id": r["id"],
+                    "profile_id": r["profile_id"],
+                    "profile_label": r["profile_label"],
+                    "total": total,
+                    "done": r["done"],
+                    "delay_seconds": r["delay_seconds"],
+                    "max_slowmode_wait": r["max_slowmode_wait"],
+                    "created_at": str(r["created_at"]),
+                    "updated_at": str(r["updated_at"]),
+                    "duration_seconds": duration,
+                    "seconds_per_target": round(duration / total, 2) if duration and total else None,
+                }
+            )
+        return out
+
     def get_active_job(self, profile_id: int) -> JobRow | None:
         with self._conn() as conn, conn.cursor() as cur:
             cur.execute(
