@@ -153,38 +153,49 @@ class TelegramService:
         """List every group/supergroup on the account (not DMs / broadcast channels)."""
         skip_ids = skip_ids or set()
         client = self._client()
-        targets: list[TelegramTarget] = []
         try:
-            await client.connect()
-            if not await client.is_user_authorized():
+            await asyncio.wait_for(client.connect(), timeout=30)
+            if not await asyncio.wait_for(client.is_user_authorized(), timeout=30):
                 raise RuntimeError("Telegram session is not authorized")
-            async for dialog in client.iter_dialogs():
-                entity = dialog.entity
-                tid = str(dialog.id)
-                if tid in skip_ids:
-                    continue
-                if isinstance(entity, Chat):
-                    targets.append(
-                        TelegramTarget(
-                            id=tid,
-                            name=dialog.name or tid,
-                            kind="group",
-                        )
-                    )
-                elif isinstance(entity, Channel) and not entity.broadcast:
-                    stars = int(getattr(entity, "send_paid_messages_stars", None) or 0)
-                    targets.append(
-                        TelegramTarget(
-                            id=tid,
-                            name=dialog.name or tid,
-                            kind="supergroup",
-                            stars_required=stars,
-                        )
-                    )
-            targets.sort(key=lambda t: t.name.lower())
-            return targets
+            # A stalled connection here previously hung forever with no
+            # timeout at all -- the job would sit at "Loading Telegram
+            # groups..." indefinitely with a technically-alive worker thread,
+            # so even the stuck-job reaper wouldn't catch it (nothing to
+            # reap; it's not dead, just frozen). Bounded now so a bad
+            # connection fails the job cleanly instead of hanging it.
+            return await asyncio.wait_for(self._collect_groups(client, skip_ids), timeout=120)
         finally:
             await client.disconnect()
+
+    async def _collect_groups(
+        self, client: TelegramClient, skip_ids: set[str]
+    ) -> list[TelegramTarget]:
+        targets: list[TelegramTarget] = []
+        async for dialog in client.iter_dialogs():
+            entity = dialog.entity
+            tid = str(dialog.id)
+            if tid in skip_ids:
+                continue
+            if isinstance(entity, Chat):
+                targets.append(
+                    TelegramTarget(
+                        id=tid,
+                        name=dialog.name or tid,
+                        kind="group",
+                    )
+                )
+            elif isinstance(entity, Channel) and not entity.broadcast:
+                stars = int(getattr(entity, "send_paid_messages_stars", None) or 0)
+                targets.append(
+                    TelegramTarget(
+                        id=tid,
+                        name=dialog.name or tid,
+                        kind="supergroup",
+                        stars_required=stars,
+                    )
+                )
+        targets.sort(key=lambda t: t.name.lower())
+        return targets
 
     async def list_tagged_saved_messages(self, limit: int = 200) -> list[SavedMessageOption]:
         """Saved Messages entries the account has reacted to — Telegram's own
@@ -514,8 +525,8 @@ class TelegramService:
         hasn't finished tearing down server-side before the next one
         reconnects with the same auth key."""
         client = self._client()
-        await client.connect()
-        if not await client.is_user_authorized():
+        await asyncio.wait_for(client.connect(), timeout=30)
+        if not await asyncio.wait_for(client.is_user_authorized(), timeout=30):
             await client.disconnect()
             raise RuntimeError("Telegram session is not authorized")
         return client
