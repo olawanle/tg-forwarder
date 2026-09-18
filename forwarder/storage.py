@@ -34,7 +34,7 @@ def _get_pool(database_url: str) -> pg_pool.ThreadedConnectionPool:
         with _POOLS_LOCK:
             if database_url not in _POOLS:
                 _POOLS[database_url] = pg_pool.ThreadedConnectionPool(
-                    1, 10, dsn=database_url
+                    1, 20, dsn=database_url
                 )
     return _POOLS[database_url]
 
@@ -295,6 +295,20 @@ class Storage:
             # set = this user's Compose always starts at this delay instead.
             cur.execute(
                 "ALTER TABLE users ADD COLUMN IF NOT EXISTS default_delay_seconds DOUBLE PRECISION;"
+            )
+            # _reap_stuck_jobs (job_runner.py) scans for queued/running jobs
+            # with a stale updated_at on every scheduler tick (20s). Without
+            # this, that's a sequential scan of the whole jobs table each
+            # time -- cheap when the table is small, but it grows with every
+            # job ever run and was never indexed for this access pattern,
+            # so the scan (and the connection it holds) gets more expensive
+            # over time and competes with the connections active broadcasts
+            # need for their own per-target updates.
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_jobs_active_updated ON jobs(updated_at)
+                    WHERE status IN ('queued', 'running');
+                """
             )
 
     # ---------------------------------------------------------------- users
