@@ -85,7 +85,21 @@ class TelegramService:
     def _client(self) -> TelegramClient:
         if not self.api_id or not self.api_hash:
             raise RuntimeError("TELEGRAM_API_ID and TELEGRAM_API_HASH are required")
-        return TelegramClient(StringSession(self.session or ""), self.api_id, self.api_hash)
+        # We never register live event handlers -- every call here is a plain
+        # RPC (connect, send, list dialogs, disconnect). receive_updates=False
+        # stops Telethon's background update loop from running at all, which
+        # otherwise tries to parse every real-time update Telegram pushes to
+        # the account (new messages, reactions, etc.) even though nothing
+        # reads them. That loop hitting a TL constructor it doesn't recognize
+        # (telethon.errors.common.TypeNotFoundError) desyncs the connection's
+        # read position, which cascades into "wrong session ID" errors and a
+        # tight reconnect loop -- observed driving the service to OOM.
+        return TelegramClient(
+            StringSession(self.session or ""),
+            self.api_id,
+            self.api_hash,
+            receive_updates=False,
+        )
 
     async def status(self) -> dict[str, str | bool]:
         if not self.configured():
