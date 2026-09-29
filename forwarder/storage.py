@@ -34,7 +34,7 @@ def _get_pool(database_url: str) -> pg_pool.ThreadedConnectionPool:
         with _POOLS_LOCK:
             if database_url not in _POOLS:
                 _POOLS[database_url] = pg_pool.ThreadedConnectionPool(
-                    1, 20, dsn=database_url
+                    1, 30, dsn=database_url
                 )
     return _POOLS[database_url]
 

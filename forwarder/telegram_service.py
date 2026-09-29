@@ -94,11 +94,25 @@ class TelegramService:
         # (telethon.errors.common.TypeNotFoundError) desyncs the connection's
         # read position, which cascades into "wrong session ID" errors and a
         # tight reconnect loop -- observed driving the service to OOM.
+        # connection_retries/request_retries default to 5 each with a 1s
+        # retry_delay, but that budget is per attempt -- as long as
+        # auto_reconnect is on and this client stays connected, a prolonged
+        # Telegram-side outage makes it start a fresh 5-retry cycle again and
+        # again with barely a pause between cycles. That's what happened on
+        # 2026-09-28: ~16:19-17:23 UTC of continuous "Telegram is having
+        # internal issues" (GetDifferenceRequest) in the logs, one long
+        # outage on Telegram's end, but our client hammered it the entire
+        # hour instead of backing off, burning enough CPU to help exhaust the
+        # DB pool for unrelated requests too. Capping the retries and adding
+        # a real delay between cycles bounds the damage from the next one.
         return TelegramClient(
             StringSession(self.session or ""),
             self.api_id,
             self.api_hash,
             receive_updates=False,
+            connection_retries=3,
+            request_retries=3,
+            retry_delay=5,
         )
 
     async def status(self) -> dict[str, str | bool]:
