@@ -493,7 +493,11 @@ class JobRunner:
                 # pace so it doesn't keep tripping the same penalty on
                 # every following target; decay back down once sends are
                 # clean again.
-                if result.status in ("error", "skipped_slowmode"):
+                #
+                # server_side errors (Telegram's own DC having trouble) are
+                # excluded: a bigger delay doesn't fix a flaky DC, it only
+                # adds artificial slowdown on top of Telethon's own retries.
+                if result.status in ("error", "skipped_slowmode") and not result.server_side:
                     throttle_backoff = min(max(throttle_backoff, 3.0) * 2, 60.0)
                 elif result.status == "ok":
                     throttle_backoff = max(0.0, throttle_backoff / 2)

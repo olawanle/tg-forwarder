@@ -9,6 +9,7 @@ from telethon.errors import (
     ChannelPrivateError,
     ChatWriteForbiddenError,
     FloodWaitError,
+    ServerError,
     SessionPasswordNeededError,
     SlowModeWaitError,
     UserBannedInChannelError,
@@ -32,6 +33,12 @@ class SendResult:
     target_name: str
     status: str
     detail: str = ""
+    # True for a Telegram-side server error (DC outage, overload, etc.) --
+    # distinct from account-level throttling (FloodWait/slowmode). The
+    # job runner's self-throttle backoff should not escalate for this: a
+    # bigger delay doesn't fix a flaky DC, it only adds artificial delay on
+    # top of Telethon's own built-in retries.
+    server_side: bool = False
 
 
 @dataclass
@@ -397,6 +404,17 @@ class TelegramService:
 
     def _classify_send_error(self, target_id: str, name: str, exc: Exception) -> SendResult:
         text = str(exc)
+        if isinstance(exc, ServerError):
+            # e.g. RpcCallFailError ("Telegram is having internal issues"),
+            # InterdcCallRichErrorError -- Telegram's own DC having trouble,
+            # not something our send rate caused or can fix by slowing down.
+            return SendResult(
+                target_id,
+                name,
+                "error",
+                f"Telegram-side server error (not account throttling): {text[:240]}",
+                server_side=True,
+            )
         if self._is_deleted_response(None, exc):
             return SendResult(
                 target_id,
