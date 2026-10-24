@@ -148,10 +148,20 @@ export interface AdminUserProfileStats {
   last_activity: string | null;
 }
 
+export interface LoginAuditEntry {
+  stage: string;
+  success: boolean;
+  ip: string | null;
+  detail: string;
+  at: string;
+}
+
 export interface AdminUserStats {
   total_sent: number;
   total_errors: number;
   total_attempts: number;
   last_activity: string | null;
   profiles: AdminUserProfileStats[];
+  distinct_login_ips_7d: number;
+  recent_logins: LoginAuditEntry[];
 }

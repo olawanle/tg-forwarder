@@ -138,6 +138,18 @@ class UserStatsRow:
 
 
 @dataclass
+class LoginAuditRow:
+    id: int
+    identifier: str
+    user_id: int | None
+    stage: str
+    success: bool
+    ip: str | None
+    detail: str
+    at: str
+
+
+@dataclass
 class JobResultRow:
     id: int
     job_id: int
@@ -342,6 +354,30 @@ class Storage:
                 CREATE INDEX IF NOT EXISTS idx_totp_backup_codes_user ON totp_backup_codes(user_id);
                 """
             )
+            # Every login attempt (password, TOTP, setup-confirm), success
+            # or failure. Two jobs: rate-limiting (count recent failures for
+            # an identifier before even checking credentials) and the
+            # admin-visible login history that's also the raw material for
+            # spotting account sharing/abuse (many distinct IPs for one
+            # user in a short window).
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS login_audit (
+                    id SERIAL PRIMARY KEY,
+                    identifier TEXT NOT NULL,
+                    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                    stage TEXT NOT NULL,
+                    success BOOLEAN NOT NULL,
+                    ip TEXT,
+                    detail TEXT NOT NULL DEFAULT '',
+                    at TIMESTAMPTZ NOT NULL DEFAULT now()
+                );
+                CREATE INDEX IF NOT EXISTS idx_login_audit_identifier_at
+                    ON login_audit(identifier, at DESC);
+                CREATE INDEX IF NOT EXISTS idx_login_audit_user_at
+                    ON login_audit(user_id, at DESC);
+                """
+            )
 
     # ---------------------------------------------------------------- users
 
@@ -491,6 +527,90 @@ class Storage:
         immediately instead of staying valid until it naturally expires."""
         with self._conn() as conn, conn.cursor() as cur:
             cur.execute("UPDATE users SET session_id = NULL WHERE id = %s", (user_id,))
+
+    # ------------------------------------------------------------ login audit
+
+    def record_login_attempt(
+        self,
+        identifier: str,
+        stage: str,
+        success: bool,
+        ip: str | None = None,
+        user_id: int | None = None,
+        detail: str = "",
+    ) -> None:
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO login_audit(identifier, user_id, stage, success, ip, detail)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (identifier.strip().lower(), user_id, stage, success, ip, detail),
+            )
+
+    def count_recent_failed_attempts(self, identifier: str, minutes: int = 15) -> int:
+        """Failures across every login stage for this identifier -- an
+        attacker bouncing between /auth/login and /auth/login/totp still
+        gets throttled as one actor."""
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COUNT(*) AS n FROM login_audit
+                WHERE identifier = %s AND success = FALSE
+                  AND at > now() - (%s || ' minutes')::interval
+                """,
+                (identifier.strip().lower(), minutes),
+            )
+            return int(cur.fetchone()["n"])
+
+    def list_login_audit(self, user_id: int, limit: int = 20) -> list[LoginAuditRow]:
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT * FROM login_audit
+                WHERE user_id = %s
+                ORDER BY id DESC
+                LIMIT %s
+                """,
+                (user_id, limit),
+            )
+            rows = cur.fetchall()
+        return [
+            LoginAuditRow(
+                id=r["id"],
+                identifier=r["identifier"],
+                user_id=r["user_id"],
+                stage=r["stage"],
+                success=bool(r["success"]),
+                ip=r["ip"],
+                detail=r["detail"],
+                at=str(r["at"]),
+            )
+            for r in rows
+        ]
+
+    def distinct_login_ips(self, user_id: int, days: int = 7) -> int:
+        """A rough abuse signal: how many different IPs successfully logged
+        into this account recently. One person on a stable connection is
+        usually 1-3; many more suggests the credentials are shared."""
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COUNT(DISTINCT ip) AS n FROM login_audit
+                WHERE user_id = %s AND success = TRUE AND ip IS NOT NULL
+                  AND at > now() - (%s || ' days')::interval
+                """,
+                (user_id, days),
+            )
+            return int(cur.fetchone()["n"])
+
+    def delete_old_login_audit(self, days: int = 90) -> int:
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM login_audit WHERE at < now() - (%s || ' days')::interval",
+                (days,),
+            )
+            return cur.rowcount
 
     def set_user_default_delay(self, user_id: int, value: float | None) -> None:
         with self._conn() as conn, conn.cursor() as cur:

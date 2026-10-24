@@ -258,6 +258,14 @@ class AdminResetPasswordResponse(BaseModel):
     temp_password: str
 
 
+class LoginAuditOut(BaseModel):
+    stage: str
+    success: bool
+    ip: str | None
+    detail: str
+    at: str
+
+
 class AdminUserProfileStatsOut(BaseModel):
     id: int
     label: str
@@ -273,3 +281,5 @@ class AdminUserStatsOut(BaseModel):
     total_attempts: int
     last_activity: str | None
     profiles: list[AdminUserProfileStatsOut]
+    distinct_login_ips_7d: int
+    recent_logins: list[LoginAuditOut]

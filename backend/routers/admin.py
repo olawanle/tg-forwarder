@@ -141,10 +141,18 @@ def user_stats(
     user_id: int, _: UserRow = Depends(require_admin), store: Storage = Depends(get_store)
 ):
     s = store.get_user_stats(user_id)
+    logins = store.list_login_audit(user_id, limit=15)
     return schemas.AdminUserStatsOut(
         total_sent=s.total_sent,
         total_errors=s.total_errors,
         total_attempts=s.total_attempts,
         last_activity=s.last_activity,
         profiles=[schemas.AdminUserProfileStatsOut(**p) for p in s.profiles],
+        distinct_login_ips_7d=store.distinct_login_ips(user_id, days=7),
+        recent_logins=[
+            schemas.LoginAuditOut(
+                stage=l.stage, success=l.success, ip=l.ip, detail=l.detail, at=l.at
+            )
+            for l in logins
+        ],
     )

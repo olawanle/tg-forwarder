@@ -12,6 +12,7 @@ from forwarder.auth import (
     totp_provisioning_uri,
     verify_totp_code,
 )
+from forwarder.notify import notify_login
 from forwarder.storage import Storage, UserRow
 
 from backend import schemas
@@ -21,9 +22,26 @@ from backend.totp_qr import qr_data_uri
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+# Applies across every login stage (password, TOTP, backup code, setup
+# confirm) for one identifier (email) -- an attacker bouncing between
+# endpoints is still throttled as one actor. Covers brute-forcing a known
+# account's password or 6-digit TOTP code alike.
+_MAX_FAILED_ATTEMPTS = 5
+_RATE_LIMIT_WINDOW_MINUTES = 15
+
 
 def _client_ip(request: Request) -> str | None:
     return request.client.host if request.client else None
+
+
+def _enforce_rate_limit(store: Storage, identifier: str) -> None:
+    if store.count_recent_failed_attempts(identifier, minutes=_RATE_LIMIT_WINDOW_MINUTES) >= (
+        _MAX_FAILED_ATTEMPTS
+    ):
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "Too many failed attempts. Try again in a few minutes.",
+        )
 
 
 def _decode_pre_auth_or_401(token: str) -> int:
@@ -37,6 +55,7 @@ def _finish_login(
     store: Storage, user: UserRow, ip: str | None
 ) -> schemas.TotpSetupConfirmResponse:
     session_id = store.rotate_session(user.id, login_ip=ip)
+    notify_login(user, ip)
     return schemas.TotpSetupConfirmResponse(
         token=create_token(user.id, session_id),
         user_id=user.id,
@@ -48,13 +67,20 @@ def _finish_login(
 
 
 @router.post("/login", response_model=schemas.LoginStepResponse)
-def login(body: schemas.LoginRequest, store: Storage = Depends(get_store)):
+def login(body: schemas.LoginRequest, request: Request, store: Storage = Depends(get_store)):
+    identifier = body.email.strip().lower()
+    ip = _client_ip(request)
+    _enforce_rate_limit(store, identifier)
+
     user = authenticate(store, body.email, body.password)
     if not user:
+        store.record_login_attempt(identifier, "password", False, ip=ip)
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED,
             "Invalid email or password, or the account is disabled.",
         )
+    store.record_login_attempt(identifier, "password", True, ip=ip, user_id=user.id)
+
     pre_auth_token = create_pre_auth_token(user.id)
     if user.totp_enabled:
         return schemas.LoginStepResponse(status="totp_required", pre_auth_token=pre_auth_token)
@@ -82,14 +108,28 @@ def login_totp(
     if not user or not user.is_active or not user.totp_enabled:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "This step expired — log in again.")
 
+    ip = _client_ip(request)
+    _enforce_rate_limit(store, user.email)
+
     secret = store.get_totp_secret(user.id)
     ok = bool(secret) and verify_totp_code(secret, body.code)
+    used_backup = False
     if not ok:
         ok = store.consume_backup_code(user.id, normalize_backup_code(body.code))
+        used_backup = ok
     if not ok:
+        store.record_login_attempt(user.email, "totp", False, ip=ip, user_id=user.id)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Incorrect code.")
 
-    return _finish_login(store, user, _client_ip(request))
+    store.record_login_attempt(
+        user.email,
+        "totp",
+        True,
+        ip=ip,
+        user_id=user.id,
+        detail="backup code" if used_backup else "",
+    )
+    return _finish_login(store, user, ip)
 
 
 @router.post("/totp/setup/confirm", response_model=schemas.TotpSetupConfirmResponse)
@@ -101,18 +141,23 @@ def totp_setup_confirm(
     if not user or not user.is_active:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "This step expired — log in again.")
 
+    ip = _client_ip(request)
+    _enforce_rate_limit(store, user.email)
+
     secret = store.get_totp_secret(user.id)
     if not secret or not verify_totp_code(secret, body.code):
+        store.record_login_attempt(user.email, "totp_setup", False, ip=ip, user_id=user.id)
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             "Incorrect code — use the current 6-digit code from your authenticator app.",
         )
+    store.record_login_attempt(user.email, "totp_setup", True, ip=ip, user_id=user.id)
 
     store.enable_totp(user.id)
     codes = generate_backup_codes()
     store.replace_backup_codes(user.id, hash_backup_codes(codes))
 
-    result = _finish_login(store, user, _client_ip(request))
+    result = _finish_login(store, user, ip)
     result.backup_codes = codes
     return result
 

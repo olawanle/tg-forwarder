@@ -435,6 +435,35 @@ export function Admin() {
                   </div>
                 ))
               )}
+
+              <div style={{ fontSize: 12.5, fontWeight: 800, color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.04em", padding: "6px 2px 0" }}>
+                Logins
+              </div>
+              {userStats.data.distinct_login_ips_7d > 2 && (
+                <div style={{ background: "var(--bad-soft)", borderRadius: 14, padding: "10px 12px", fontSize: 12.5, color: "var(--bad)", fontWeight: 600 }}>
+                  {userStats.data.distinct_login_ips_7d} different IPs in the last 7 days — worth
+                  checking this account isn't being shared.
+                </div>
+              )}
+              {userStats.data.recent_logins.length === 0 ? (
+                <div style={{ color: "var(--text3)", fontSize: 13, textAlign: "center", padding: "10px 0" }}>No login history yet.</div>
+              ) : (
+                userStats.data.recent_logins.map((l, i) => (
+                  <div
+                    key={i}
+                    style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 12.5, padding: "6px 2px", borderTop: i > 0 ? "1px solid var(--hair)" : undefined }}
+                  >
+                    <div style={{ color: l.success ? "var(--text2)" : "var(--bad)", fontWeight: 600 }}>
+                      {l.success ? "✓" : "✗"} {l.stage}
+                      {l.detail ? ` (${l.detail})` : ""}
+                    </div>
+                    <div style={{ color: "var(--text3)", textAlign: "right" }}>
+                      {l.at.slice(0, 16).replace("T", " ")}
+                      {l.ip ? ` · ${l.ip}` : ""}
+                    </div>
+                  </div>
+                ))
+              )}
             </>
           ) : (
             <div style={{ color: "var(--bad)", fontSize: 13, textAlign: "center", padding: "16px 0" }}>Could not load stats.</div>
