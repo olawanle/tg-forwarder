@@ -31,6 +31,12 @@
   --bad-soft: rgba(217, 45, 58, 0.11);
   --field: #e7e9f1;
   --field-in: inset 0 0 0 1px rgba(20, 28, 54, 0.08);
+  /* Liquid Glass: the rim-light + inner-glow pair that makes a translucent
+     surface read as curved glass catching light, not just a blurred PNG.
+     --glass-highlight sits along the top edge (inset 0 1px 0), --glass-rim
+     traces the full border for the "thick edge" look. */
+  --glass-highlight: rgba(255, 255, 255, 0.65);
+  --glass-rim: inset 0 0 0 1px rgba(255, 255, 255, 0.3);
   /* Premium/private-workspace accent -- layered on top of the signature
      coral-amber brand gradient for badges, rings and borders, not a
      replacement for it. Distinguishes this deployment's chrome without
@@ -70,6 +76,8 @@
   --bad-soft: rgba(255, 91, 102, 0.14);
   --field: #1e2029;
   --field-in: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  --glass-highlight: rgba(255, 255, 255, 0.14);
+  --glass-rim: inset 0 0 0 1px rgba(255, 255, 255, 0.09);
   --premium: #e2bf72;
   --premium-soft: rgba(226, 191, 114, 0.16);
   --premium-grad: linear-gradient(135deg, #d7ae5c, #f3e2b0, #d7ae5c);
@@ -108,6 +116,8 @@
     --bad-soft: rgba(255, 91, 102, 0.14);
     --field: #1e2029;
     --field-in: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+    --glass-highlight: rgba(255, 255, 255, 0.14);
+    --glass-rim: inset 0 0 0 1px rgba(255, 255, 255, 0.09);
     --premium: #e2bf72;
     --premium-soft: rgba(226, 191, 114, 0.16);
     --premium-grad: linear-gradient(135deg, #d7ae5c, #f3e2b0, #d7ae5c);
