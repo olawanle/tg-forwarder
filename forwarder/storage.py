@@ -1049,3 +1049,32 @@ class Storage:
                     (ids,),
                 )
         return ids
+
+    # --------------------------------------------------------- retention
+
+    def delete_old_jobs(self, days: int = 14) -> int:
+        """Finished jobs older than this many days. job_results cascades
+        (ON DELETE CASCADE on job_id) and has no retention of its own —
+        one row per broadcast target, unbounded, is what filled the
+        Postgres volume in production. Scheduled/active jobs are untouched
+        regardless of age."""
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                DELETE FROM jobs
+                WHERE status IN ('completed', 'failed', 'cancelled')
+                  AND updated_at < now() - (%s || ' days')::interval
+                """,
+                (days,),
+            )
+            return cur.rowcount
+
+    def delete_old_send_logs(self, days: int = 14) -> int:
+        """send_log is independent of job lifecycle (kept for the per-profile
+        activity feed), so it needs its own age-based cleanup."""
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM send_log WHERE created_at < now() - (%s || ' days')::interval",
+                (days,),
+            )
+            return cur.rowcount
