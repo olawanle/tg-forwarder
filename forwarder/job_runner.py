@@ -130,9 +130,13 @@ class JobRunner:
     def _scheduler_loop(self) -> None:
         settings = get_settings()
         store = Storage(settings.database_url)
+        last_prune = 0.0
         while True:
             try:
                 self._reap_stuck_jobs(store)
+                if time.time() - last_prune > 6 * 3600:
+                    self._prune_old_data(store)
+                    last_prune = time.time()
                 for job in store.list_due_scheduled_jobs():
                     if self.is_worker_alive(job.profile_id):
                         continue  # profile busy — picked up on a later tick
@@ -144,6 +148,22 @@ class JobRunner:
             except Exception:
                 log.exception("Scheduler tick failed")
             time.sleep(20)
+
+    def _prune_old_data(self, store: Storage) -> None:
+        """job_results/send_log have no retention of their own and grow one
+        row per broadcast target — this is what filled the Postgres volume
+        and crash-looped it in production. Keep 14 days of history."""
+        try:
+            deleted_jobs = store.delete_old_jobs(days=14)
+            deleted_logs = store.delete_old_send_logs(days=14)
+            if deleted_jobs or deleted_logs:
+                log.info(
+                    "Pruned %d old jobs and %d old send_log rows",
+                    deleted_jobs,
+                    deleted_logs,
+                )
+        except Exception:
+            log.exception("Retention prune failed")
 
     def _reap_stuck_jobs(self, store: Storage) -> None:
         """A job can be left at queued/running in the database with no
