@@ -34,6 +34,9 @@ def list_users(_: UserRow = Depends(require_admin), store: Storage = Depends(get
                 created_at=u.created_at,
                 profile_count=len(profiles),
                 default_delay_seconds=u.default_delay_seconds,
+                totp_enabled=u.totp_enabled,
+                last_login_at=u.last_login_at,
+                last_login_ip=u.last_login_ip,
             )
         )
     return out
@@ -58,6 +61,9 @@ def set_user_default_delay(
         created_at=user.created_at,
         profile_count=len(store.list_profiles_for_user(user_id)),
         default_delay_seconds=body.default_delay_seconds,
+        totp_enabled=user.totp_enabled,
+        last_login_at=user.last_login_at,
+        last_login_ip=user.last_login_ip,
     )
 
 
@@ -111,6 +117,16 @@ def reset_password(
     temp_password = _gen_password()
     store.set_user_password(user_id, hash_password(temp_password), must_change_password=True)
     return schemas.AdminResetPasswordResponse(temp_password=temp_password)
+
+
+@router.post("/users/{user_id}/reset-totp")
+def reset_totp(
+    user_id: int, _: UserRow = Depends(require_admin), store: Storage = Depends(get_store)
+):
+    """Lost-device recovery: clears the user's 2FA secret, backup codes,
+    and active session. They set up 2FA again from scratch on next login."""
+    store.disable_totp(user_id)
+    return {"ok": True}
 
 
 @router.get("/users/{user_id}/profiles", response_model=list[schemas.ProfileOut])

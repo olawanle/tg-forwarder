@@ -64,6 +64,15 @@ export function Admin() {
     }
   }
 
+  const [totpResetId, setTotpResetId] = useState<number | null>(null);
+  const resetTotp = useMutation({
+    mutationFn: (id: number) => api.post(`/admin/users/${id}/reset-totp`),
+    onSuccess: (_data, id) => {
+      setTotpResetId(id);
+      qc.invalidateQueries({ queryKey: ["admin-users"] });
+    },
+  });
+
   const appSettings = useQuery({
     queryKey: ["app-settings"],
     queryFn: () => api.get<AppSettings>("/settings"),
@@ -278,23 +287,47 @@ export function Admin() {
                     {u.profile_count} profile{u.profile_count === 1 ? "" : "s"} · {u.created_at.slice(0, 10)} ·{" "}
                     {u.default_delay_seconds !== null ? `${u.default_delay_seconds}s delay` : "default delay"}
                   </div>
+                  <div style={{ fontSize: 11.5, color: "var(--text3)", marginTop: 2 }}>
+                    {u.last_login_at
+                      ? `Last login ${u.last_login_at.slice(0, 16).replace("T", " ")}${u.last_login_ip ? ` · ${u.last_login_ip}` : ""}`
+                      : "Never logged in"}
+                  </div>
                 </div>
-                <span
-                  style={{
-                    fontSize: 11,
-                    fontWeight: 700,
-                    padding: "4px 10px",
-                    borderRadius: 999,
-                    background: u.role === "admin" ? "var(--accent-soft)" : "var(--glass-2)",
-                    color: u.role === "admin" ? "var(--accent)" : "var(--text2)",
-                  }}
-                >
-                  {u.role}
-                </span>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-end" }}>
+                  <span
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 700,
+                      padding: "4px 10px",
+                      borderRadius: 999,
+                      background: u.role === "admin" ? "var(--accent-soft)" : "var(--glass-2)",
+                      color: u.role === "admin" ? "var(--accent)" : "var(--text2)",
+                    }}
+                  >
+                    {u.role}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: 10.5,
+                      fontWeight: 700,
+                      padding: "3px 9px",
+                      borderRadius: 999,
+                      background: u.totp_enabled ? "var(--ok-soft)" : "var(--glass-2)",
+                      color: u.totp_enabled ? "var(--ok)" : "var(--text3)",
+                    }}
+                  >
+                    {u.totp_enabled ? "2FA on" : "2FA not set up"}
+                  </span>
+                </div>
               </div>
               {resetResult?.id === u.id && (
                 <div style={{ background: "var(--ok-soft)", borderRadius: 14, padding: "10px 12px", fontSize: 12.5 }}>
                   New temp password: <strong style={{ fontFamily: "ui-monospace, monospace" }}>{resetResult.password}</strong>
+                </div>
+              )}
+              {totpResetId === u.id && (
+                <div style={{ background: "var(--ok-soft)", borderRadius: 14, padding: "10px 12px", fontSize: 12.5 }}>
+                  2FA reset — they'll set it up again on their next login.
                 </div>
               )}
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -314,6 +347,19 @@ export function Admin() {
                 <Button variant="outline" small onClick={() => handleReset(u)}>
                   Reset password
                 </Button>
+                {u.totp_enabled && (
+                  <Button
+                    variant="outline"
+                    small
+                    onClick={() => {
+                      if (window.confirm(`Reset 2FA for ${u.email}? They'll set it up again next login.`)) {
+                        resetTotp.mutate(u.id);
+                      }
+                    }}
+                  >
+                    Reset 2FA
+                  </Button>
+                )}
                 <Button
                   variant={u.is_active ? "danger" : "primary"}
                   small

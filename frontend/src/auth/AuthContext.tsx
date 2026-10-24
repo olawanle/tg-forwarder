@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { api, setToken } from "../api/client";
-import type { LoginResponse } from "../api/types";
+import type { TotpSetupConfirmResponse } from "../api/types";
 
 interface AuthUser {
   userId: number;
@@ -12,7 +12,11 @@ interface AuthUser {
 interface AuthContextValue {
   user: AuthUser | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  // Login is always two steps now (password, then a TOTP/backup code) --
+  // there is no one-call `login()` anymore. The Login page drives the
+  // /auth/login + /auth/login/totp (or /auth/totp/setup/confirm) calls
+  // itself and hands the final result here once it has one.
+  completeLogin: (res: TotpSetupConfirmResponse) => void;
   logout: () => void;
   markPasswordChanged: () => void;
 }
@@ -36,8 +40,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setLoading(false);
   }, []);
 
-  async function login(email: string, password: string) {
-    const res = await api.post<LoginResponse>("/auth/login", { email, password });
+  function completeLogin(res: TotpSetupConfirmResponse) {
     setToken(res.token);
     const authUser: AuthUser = {
       userId: res.user_id,
@@ -50,6 +53,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   function logout() {
+    // Best-effort: also end the session server-side so this token can't be
+    // replayed. Still clear local state even if the request fails/is
+    // already-expired — the user is logging out either way.
+    api.post("/auth/logout").catch(() => {});
     setToken(null);
     localStorage.removeItem(STORAGE_KEY);
     localStorage.removeItem("forwarder_active_profile");
@@ -66,7 +73,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, markPasswordChanged }}>
+    <AuthContext.Provider value={{ user, loading, completeLogin, logout, markPasswordChanged }}>
       {children}
     </AuthContext.Provider>
   );

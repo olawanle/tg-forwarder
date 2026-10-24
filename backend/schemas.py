@@ -16,6 +16,43 @@ class LoginResponse(BaseModel):
     must_change_password: bool
 
 
+class LoginStepResponse(BaseModel):
+    """/auth/login never returns a usable token directly -- 2FA is always
+    required, so it's always one of these two branches instead. The
+    `status` field is what the frontend switches on; fields outside the
+    relevant branch are simply omitted."""
+
+    status: str  # "totp_required" | "totp_setup_required"
+    pre_auth_token: str | None = None
+    # status == "totp_setup_required" only (first login, or after an admin
+    # 2FA reset):
+    totp_secret: str | None = None
+    totp_qr_data_uri: str | None = None
+
+
+class TotpVerifyRequest(BaseModel):
+    pre_auth_token: str
+    code: str
+
+
+class TotpSetupConfirmRequest(BaseModel):
+    pre_auth_token: str
+    code: str
+
+
+class TotpSetupConfirmResponse(BaseModel):
+    token: str
+    user_id: int
+    email: str
+    role: str
+    must_change_password: bool
+    backup_codes: list[str]
+
+
+class RegenerateBackupCodesResponse(BaseModel):
+    backup_codes: list[str]
+
+
 class ChangePasswordRequest(BaseModel):
     new_password: str
 
@@ -204,6 +241,9 @@ class AdminUserOut(BaseModel):
     created_at: str
     profile_count: int
     default_delay_seconds: float | None
+    totp_enabled: bool
+    last_login_at: str | None
+    last_login_ip: str | None
 
 
 class AdminSetUserDelayRequest(BaseModel):

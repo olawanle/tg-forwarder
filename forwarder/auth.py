@@ -1,20 +1,13 @@
 from __future__ import annotations
 
-import bcrypt
+import secrets
+import string
+
+import pyotp
 
 from forwarder.config import Settings
+from forwarder.crypto import hash_password, verify_password  # re-exported for callers
 from forwarder.storage import Storage, UserRow
-
-
-def hash_password(plain: str) -> str:
-    return bcrypt.hashpw(plain.encode(), bcrypt.gensalt()).decode()
-
-
-def verify_password(plain: str, hashed: str) -> bool:
-    try:
-        return bcrypt.checkpw(plain.encode(), hashed.encode())
-    except ValueError:
-        return False
 
 
 def authenticate(store: Storage, email: str, password: str) -> UserRow | None:
@@ -47,6 +40,11 @@ def bootstrap_admin(store: Storage, settings: Settings) -> None:
             )
             if not existing.is_active:
                 store.set_user_active(existing.id, True)
+            # A locked-out admin needs full break-glass access back,
+            # including past whatever 2FA device they've lost -- otherwise
+            # this reset still leaves them stuck at a TOTP prompt they
+            # can't answer. They go through setup again on next login.
+            store.disable_totp(existing.id)
         return
 
     if store.count_admins() > 0:
@@ -57,3 +55,46 @@ def bootstrap_admin(store: Storage, settings: Settings) -> None:
         role="admin",
         must_change_password=True,
     )
+
+
+# ------------------------------------------------------------- 2FA (TOTP)
+
+_ISSUER = "Group Forwarder"
+_BACKUP_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # no 0/O/1/I
+
+
+def generate_totp_secret() -> str:
+    return pyotp.random_base32()
+
+
+def totp_provisioning_uri(email: str, secret: str) -> str:
+    """otpauth:// URI for the QR code -- what Google Authenticator (or any
+    compatible app) actually scans."""
+    return pyotp.totp.TOTP(secret).provisioning_uri(name=email, issuer_name=_ISSUER)
+
+
+def verify_totp_code(secret: str, code: str) -> bool:
+    code = code.strip().replace(" ", "")
+    if not code:
+        return False
+    # valid_window=1 tolerates the previous/next 30s step for clock drift.
+    return pyotp.totp.TOTP(secret).verify(code, valid_window=1)
+
+
+def generate_backup_codes(count: int = 10) -> list[str]:
+    """One-time recovery codes, shown once at 2FA setup. Format XXXX-XXXX
+    for readability; normalize_backup_code() strips that back out before
+    verification."""
+    codes = []
+    for _ in range(count):
+        raw = "".join(secrets.choice(_BACKUP_CODE_ALPHABET) for _ in range(8))
+        codes.append(f"{raw[:4]}-{raw[4:]}")
+    return codes
+
+
+def hash_backup_codes(codes: list[str]) -> list[str]:
+    return [hash_password(normalize_backup_code(c)) for c in codes]
+
+
+def normalize_backup_code(code: str) -> str:
+    return code.strip().upper().replace("-", "").replace(" ", "")
