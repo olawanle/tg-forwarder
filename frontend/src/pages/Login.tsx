@@ -49,7 +49,7 @@ function CodeStep({
         onSubmit(code.trim());
       }}
     >
-      <GlassCard>
+      <GlassCard premium>
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <div>
             <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: "-0.02em" }}>{title}</div>
@@ -153,7 +153,7 @@ export function Login() {
   if (step.kind === "password") {
     card = (
       <form onSubmit={handlePasswordSubmit}>
-        <GlassCard>
+        <GlassCard premium>
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <Field label="Email">
               <Input
@@ -226,7 +226,7 @@ export function Login() {
     );
   } else {
     card = (
-      <GlassCard>
+      <GlassCard premium>
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <div>
             <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: "-0.02em" }}>
@@ -289,12 +289,16 @@ export function Login() {
               padding: 22,
               borderRadius: 24,
               background: "var(--accent-grad)",
-              boxShadow: "0 14px 34px var(--accent-soft), inset 0 1.5px 0 rgba(255,255,255,0.5)",
+              boxShadow:
+                "0 14px 34px var(--accent-soft), inset 0 1.5px 0 rgba(255,255,255,0.5), var(--premium-ring)",
             }}
           >
             {MARK}
           </div>
           <div style={{ textAlign: "center" }}>
+            <div className="eyebrow-premium" style={{ justifyContent: "center", marginBottom: 4 }}>
+              Private workspace
+            </div>
             <div style={{ fontSize: 27, fontWeight: 800, letterSpacing: "-0.03em" }}>Group Forwarder</div>
             <div style={{ fontSize: 14, color: "var(--text2)", marginTop: 6, lineHeight: 1.45 }}>
               One message. Every group.
@@ -346,11 +350,28 @@ export function Login() {
                 padding: 15,
                 borderRadius: 16,
                 background: "var(--accent-grad)",
-                boxShadow: "0 16px 34px rgba(255,88,76,0.35)",
-                marginBottom: 26,
+                boxShadow:
+                  "0 16px 34px rgba(255,88,76,0.35), 0 0 0 1px rgba(226,191,114,0.4), 0 8px 22px rgba(226,191,114,0.14)",
+                marginBottom: 14,
               }}
             >
               {MARK}
+            </div>
+            <div
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 5,
+                fontSize: 10.5,
+                fontWeight: 800,
+                letterSpacing: "0.09em",
+                textTransform: "uppercase",
+                color: "#e2bf72",
+                marginBottom: 12,
+              }}
+            >
+              <span style={{ width: 5, height: 5, borderRadius: "50%", background: "linear-gradient(135deg, #d7ae5c, #f3e2b0)" }} />
+              Private workspace
             </div>
             <div style={{ fontSize: 38, fontWeight: 800, letterSpacing: "-0.03em", lineHeight: 1.08, textWrap: "balance" }}>
               One message.

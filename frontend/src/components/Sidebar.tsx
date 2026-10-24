@@ -24,7 +24,7 @@ export function Sidebar() {
   return (
     <aside className="d-sidebar">
       <Link to="/home" className="d-brand" style={{ textDecoration: "none", color: "var(--text)" }}>
-        <span className="mark">
+        <span className="mark premium-ring">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
             <path
               d="M21.5 3 2.5 10.5c-1.2.47-1.2 1.13-.22 1.43l4.9 1.53 11.35-7.16c.53-.33 1.02-.15.62.21L9.9 15.05h-.01l.01.01-.35 5.06c.5 0 .72-.23.99-.5l2.4-2.33 4.98 3.68c.92.51 1.58.25 1.81-.85l3.28-15.5c.33-1.35-.5-1.96-1.5-1.62Z"
@@ -32,7 +32,12 @@ export function Sidebar() {
             />
           </svg>
         </span>
-        <b>Forwarder</b>
+        <div>
+          <b>Forwarder</b>
+          <div className="eyebrow-premium" style={{ marginTop: 1 }}>
+            Private workspace
+          </div>
+        </div>
       </Link>
 
       {ITEMS.map((item) => (

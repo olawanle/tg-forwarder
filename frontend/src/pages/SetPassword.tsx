@@ -51,7 +51,7 @@ export function SetPassword() {
         </div>
       </div>
       <form onSubmit={handleSubmit}>
-        <GlassCard>
+        <GlassCard premium>
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <Field label="New password">
               <Input
