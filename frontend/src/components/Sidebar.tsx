@@ -23,7 +23,7 @@ export function Sidebar() {
 
   return (
     <aside className="d-sidebar">
-      <Link to="/home" className="d-brand" style={{ textDecoration: "none", color: "var(--text)" }}>
+      <Link to="/home" className="d-brand" style={{ textDecoration: "none", color: "var(--chrome-text)" }}>
         <span className="mark premium-ring">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
             <path
@@ -65,7 +65,7 @@ export function Sidebar() {
           <div className="name">{activeProfile?.label || "No profile"}</div>
           <div className="sub mono">{activeProfile?.has_session ? "CONNECTED" : "NO SESSION"}</div>
         </div>
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--chrome-text2)" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
           <path d="m6 9 6 6 6-6" />
         </svg>
       </Link>

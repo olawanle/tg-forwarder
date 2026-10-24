@@ -5,6 +5,7 @@ import { ProfileProvider } from "./profile/ProfileContext";
 import { RequireAuth } from "./routes/RequireAuth";
 import { Shell } from "./routes/Shell";
 import { useThemeInit } from "./theme/useTheme";
+import { LiquidGlassDefs } from "./components/LiquidGlassDefs";
 import { Login } from "./pages/Login";
 import { SetPassword } from "./pages/SetPassword";
 import { Home } from "./pages/Home";
@@ -38,6 +39,7 @@ export default function App() {
     <AuthProvider>
       <ProfileProvider>
         <div className="app-bg">
+          <LiquidGlassDefs />
           <AppBackground />
           <Routes>
             <Route path="/login" element={<Login />} />

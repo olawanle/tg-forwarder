@@ -7,7 +7,7 @@ export function MiniProgressRing({ fraction, size = 74 }: { fraction: number; si
           position: "absolute",
           inset: 0,
           borderRadius: "50%",
-          background: `conic-gradient(var(--accent) 0deg, #ff9a3c ${deg}deg, var(--hair) ${deg}deg)`,
+          background: `conic-gradient(var(--accent) 0deg, var(--accent2) ${deg}deg, var(--hair) ${deg}deg)`,
         }}
       />
       <div

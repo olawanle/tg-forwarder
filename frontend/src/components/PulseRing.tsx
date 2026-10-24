@@ -37,7 +37,7 @@ export function PulseRing({
           <defs>
             <linearGradient id={gradId} x1="0" y1="0" x2="1" y2="1">
               <stop offset="0%" stopColor="var(--accent)" />
-              <stop offset="100%" stopColor="#ff9a3c" />
+              <stop offset="100%" stopColor="var(--accent2)" />
             </linearGradient>
           </defs>
           <circle className="ring-track" cx={core / 2} cy={core / 2} r={r} fill="none" strokeWidth={thickness} />

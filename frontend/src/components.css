@@ -1,23 +1,66 @@
-/* Liquid Glass: real translucency + blur (not just a card named "glass"),
-   so the animated blobs in .app-blobs show through and shift as content
-   scrolls behind it -- plus a rim-light pair (top highlight + full edge
-   glow) so the surface reads as curved glass catching light, the way
-   Apple's current material does, rather than a flat frosted rectangle. */
+/* Liquid Glass. Three things make this read as actual curved glass rather
+   than "a blurred rectangle with a name":
+   1. Real refraction, not just blur -- backdrop-filter runs the shared
+      feTurbulence/feDisplacementMap filter (LiquidGlassDefs.tsx) alongside
+      blur+saturate, so the backdrop visibly warps at the surface the way
+      a lens would, same idea as the reference's refractionHeight/Amount.
+   2. A specular rim that DRIFTS (.glass-card-rim, a real child node -- not
+      ::after, since Chromium won't repaint a custom property animated
+      inside a gradient on a pseudo-element -- whose conic-gradient angle is
+      the animated --rim-angle custom property) instead of sitting at a
+      fixed angle -- Apple's own material "bends and shapes light every
+      single frame"; a static highlight next to that reads as flat.
+   3. A soft glow that follows the pointer (GlassCard.tsx sets --glow-x/
+      --glow-y on mousemove), fading in on hover -- the interactive
+      specular highlight real glass gives back when touched.
+   corner-shape: squircle is Apple's actual continuous corner curve
+   (superellipse, not a circular arc); it's a progressive enhancement --
+   unsupported browsers just keep the plain border-radius, still correct. */
 .glass-card {
   position: relative;
-  background: var(--glass-3);
-  backdrop-filter: blur(22px) saturate(180%);
-  -webkit-backdrop-filter: blur(22px) saturate(180%);
+  --glow-x: 50%;
+  --glow-y: 50%;
+  --glow-o: 0;
+  background:
+    radial-gradient(420px circle at var(--glow-x) var(--glow-y), rgb(255 255 255 / var(--glow-o)), transparent 55%),
+    var(--glass-3);
+  backdrop-filter: blur(22px) saturate(180%) url(#liquid-glass-distortion);
   border: 1px solid var(--stroke);
   border-radius: 26px;
+  corner-shape: squircle;
   box-shadow: var(--shadow), inset 0 1px 0 var(--glass-highlight), var(--glass-rim);
   padding: 20px;
+  transition: --glow-x 0.5s cubic-bezier(0.2, 0.8, 0.2, 1), --glow-y 0.5s cubic-bezier(0.2, 0.8, 0.2, 1),
+    --glow-o 0.4s ease;
+}
+.glass-card:hover {
+  --glow-o: 0.1;
+}
+.glass-card-rim {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: conic-gradient(
+    from var(--rim-angle),
+    transparent 0deg,
+    var(--glass-highlight) 35deg,
+    transparent 95deg,
+    transparent 265deg,
+    var(--glass-highlight) 325deg,
+    transparent 360deg
+  );
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: rimDrift 9s ease-in-out infinite;
+  pointer-events: none;
 }
 .glass-card--soft {
   background: var(--glass-2);
   backdrop-filter: blur(10px) saturate(160%);
-  -webkit-backdrop-filter: blur(10px) saturate(160%);
   border-radius: 18px;
+  corner-shape: squircle;
   padding: 13px 14px;
   box-shadow: var(--shadow), inset 0 1px 0 var(--glass-highlight);
 }
@@ -27,7 +70,7 @@
     var(--shadow-lg),
     inset 0 1px 0 var(--glass-highlight),
     var(--glass-rim),
-    0 0 0 1px rgba(169, 128, 31, 0.16);
+    0 0 0 1px rgba(5, 150, 105, 0.18);
 }
 .glass-card--premium::before {
   content: "";
@@ -39,7 +82,7 @@
   -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
   -webkit-mask-composite: xor;
   mask-composite: exclude;
-  opacity: 0.55;
+  opacity: 0.6;
   pointer-events: none;
 }
 
@@ -145,7 +188,7 @@ textarea.field {
   cursor: not-allowed;
 }
 .pill-btn--secondary {
-  background: linear-gradient(135deg, #2dd4e0, var(--cyan));
+  background: linear-gradient(135deg, var(--accent2), var(--cyan));
   box-shadow: 0 10px 24px var(--cyan-soft), inset 0 1.5px 0 rgba(255, 255, 255, 0.4);
 }
 .pill-btn--outline {
@@ -174,9 +217,9 @@ textarea.field {
   width: 40px;
   height: 40px;
   border-radius: 14px;
+  corner-shape: squircle;
   background: var(--glass-3);
-  backdrop-filter: blur(18px) saturate(180%);
-  -webkit-backdrop-filter: blur(18px) saturate(180%);
+  backdrop-filter: blur(18px) saturate(180%) url(#liquid-glass-distortion);
   border: 1px solid var(--stroke);
   display: grid;
   place-items: center;
@@ -273,13 +316,15 @@ textarea.field {
   padding: 0 14px calc(12px + env(safe-area-inset-bottom));
   pointer-events: none;
 }
+/* Nav chrome is solid, always-black (--chrome-bg), not glass -- the same
+   "structural chrome vs. glassy content" split as the Login page's brand
+   panel, so the "green on black" identity reads on mobile too instead of
+   only showing up in dark mode. */
 .bottom-nav {
-  background: var(--glass-3);
-  backdrop-filter: blur(28px) saturate(180%);
-  -webkit-backdrop-filter: blur(28px) saturate(180%);
-  border: 1px solid var(--stroke);
+  background: var(--chrome-bg);
+  border: 1px solid rgba(134, 239, 172, 0.12);
   border-radius: 999px;
-  box-shadow: var(--shadow-lg), inset 0 1px 0 var(--glass-highlight);
+  box-shadow: var(--shadow-lg), inset 0 1px 0 rgba(173, 255, 214, 0.1);
   padding: 11px 8px 10px;
   display: flex;
   pointer-events: auto;
@@ -293,13 +338,13 @@ textarea.field {
   align-items: center;
   gap: 5px;
   cursor: pointer;
-  color: var(--text3);
+  color: var(--chrome-text2);
   text-decoration: none;
   font-size: 11px;
   font-weight: 600;
 }
 .bottom-nav a.active {
-  color: var(--text);
+  color: var(--accent2);
   font-weight: 800;
 }
 .bottom-nav svg {
@@ -320,11 +365,11 @@ textarea.field {
   bottom: 0;
   z-index: 31;
   background: var(--glass-3);
-  backdrop-filter: blur(40px) saturate(200%);
-  -webkit-backdrop-filter: blur(40px) saturate(200%);
+  backdrop-filter: blur(40px) saturate(200%) url(#liquid-glass-distortion);
   border: 1px solid var(--stroke);
   border-bottom: none;
   border-radius: 34px 34px 0 0;
+  corner-shape: squircle;
   box-shadow: 0 -18px 50px rgba(20, 21, 28, 0.28), inset 0 1px 0 var(--glass-highlight);
   padding: 12px 20px calc(26px + env(safe-area-inset-bottom));
   display: flex;
@@ -506,11 +551,10 @@ textarea.field {
     left: 0;
     height: 100dvh;
     padding: 22px 14px;
-    background: var(--glass-3);
-    backdrop-filter: blur(28px) saturate(180%);
-    -webkit-backdrop-filter: blur(28px) saturate(180%);
-    border-right: 1px solid var(--stroke);
-    box-shadow: inset -1px 0 0 var(--glass-highlight);
+    background: var(--chrome-bg);
+    color: var(--chrome-text);
+    border-right: 1px solid rgba(134, 239, 172, 0.1);
+    box-shadow: inset -1px 0 0 rgba(173, 255, 214, 0.08);
     z-index: 10;
   }
   .d-brand {
@@ -523,6 +567,7 @@ textarea.field {
     width: 30px;
     height: 30px;
     border-radius: 10px;
+    corner-shape: squircle;
     background: var(--accent-grad);
     display: grid;
     place-items: center;
@@ -533,6 +578,7 @@ textarea.field {
     font-size: 14px;
     font-weight: 800;
     letter-spacing: -0.02em;
+    color: var(--chrome-text);
   }
   .d-nav-item {
     display: flex;
@@ -542,12 +588,12 @@ textarea.field {
     border-radius: 12px;
     font-size: 13px;
     font-weight: 700;
-    color: var(--text3);
+    color: var(--chrome-text2);
     text-decoration: none;
   }
   .d-nav-item.active {
-    background: linear-gradient(135deg, var(--accent-soft), transparent);
-    color: var(--text);
+    background: linear-gradient(135deg, rgba(52, 211, 153, 0.18), transparent);
+    color: var(--accent2);
   }
   .d-nav-item svg {
     flex-shrink: 0;
@@ -561,13 +607,13 @@ textarea.field {
     gap: 10px;
     padding: 10px;
     border-radius: 14px;
-    background: var(--glass-2);
+    background: rgba(134, 239, 172, 0.07);
     margin-top: 10px;
     cursor: pointer;
     border: none;
     font-family: inherit;
     text-align: left;
-    color: var(--text);
+    color: var(--chrome-text);
   }
   .d-profile-card .name {
     font-size: 12px;
@@ -575,7 +621,7 @@ textarea.field {
   }
   .d-profile-card .sub {
     font-size: 10px;
-    color: var(--text3);
+    color: var(--chrome-text2);
   }
   .d-profile-card > div:last-child {
     flex: 1;
@@ -647,23 +693,23 @@ textarea.field {
   }
   .d-login-brand {
     flex: 1.1;
-    background: radial-gradient(120% 100% at 20% 0%, #1c1d29, #0a0a10 65%);
+    background: var(--chrome-bg);
     position: relative;
     display: flex;
     flex-direction: column;
     justify-content: center;
     padding: 60px;
-    color: #f4f4f8;
+    color: var(--chrome-text);
     overflow: hidden;
   }
   .d-login-form {
     flex: 1;
     background: var(--glass-3);
-    backdrop-filter: blur(40px) saturate(180%);
-    -webkit-backdrop-filter: blur(40px) saturate(180%);
+    backdrop-filter: blur(40px) saturate(180%) url(#liquid-glass-distortion);
     display: flex;
     align-items: center;
     justify-content: center;
     padding: 60px;
   }
 }
+

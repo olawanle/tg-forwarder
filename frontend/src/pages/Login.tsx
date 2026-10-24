@@ -324,7 +324,7 @@ export function Login() {
               left: -60,
               transform: "translateY(-50%)",
               borderRadius: "50%",
-              border: "1.5px solid #ff3b5c",
+              border: "1.5px solid #10b981",
               animation: "pulseRing 3.4s cubic-bezier(.2,.6,.4,1) infinite",
             }}
           />
@@ -337,7 +337,7 @@ export function Login() {
               left: -60,
               transform: "translateY(-50%)",
               borderRadius: "50%",
-              border: "1.5px solid #ff9a3c",
+              border: "1.5px solid #86efac",
               animation: "pulseRing 3.4s cubic-bezier(.2,.6,.4,1) infinite",
               animationDelay: "1.1s",
             }}
@@ -351,7 +351,7 @@ export function Login() {
                 borderRadius: 16,
                 background: "var(--accent-grad)",
                 boxShadow:
-                  "0 16px 34px rgba(255,88,76,0.35), 0 0 0 1px rgba(226,191,114,0.4), 0 8px 22px rgba(226,191,114,0.14)",
+                  "0 16px 34px rgba(16,185,129,0.35), 0 0 0 1px rgba(134,239,172,0.4), 0 8px 22px rgba(134,239,172,0.14)",
                 marginBottom: 14,
               }}
             >
@@ -366,11 +366,11 @@ export function Login() {
                 fontWeight: 800,
                 letterSpacing: "0.09em",
                 textTransform: "uppercase",
-                color: "#e2bf72",
+                color: "#6ee7a8",
                 marginBottom: 12,
               }}
             >
-              <span style={{ width: 5, height: 5, borderRadius: "50%", background: "linear-gradient(135deg, #d7ae5c, #f3e2b0)" }} />
+              <span style={{ width: 5, height: 5, borderRadius: "50%", background: "linear-gradient(135deg, #10b981, #d9f99d)" }} />
               Private workspace
             </div>
             <div style={{ fontSize: 38, fontWeight: 800, letterSpacing: "-0.03em", lineHeight: 1.08, textWrap: "balance" }}>
@@ -380,7 +380,7 @@ export function Login() {
               <br />
               at once.
             </div>
-            <div style={{ fontSize: 14, color: "#a9acc0", marginTop: 14, maxWidth: 360, lineHeight: 1.6 }}>
+            <div style={{ fontSize: 14, color: "#8fae9e", marginTop: 14, maxWidth: 360, lineHeight: 1.6 }}>
               Forwarder keeps every Telegram and Discord profile you manage in sync — queue a send,
               watch it land in real time.
             </div>
