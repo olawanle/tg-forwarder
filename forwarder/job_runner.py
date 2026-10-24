@@ -156,11 +156,13 @@ class JobRunner:
         try:
             deleted_jobs = store.delete_old_jobs(days=14)
             deleted_logs = store.delete_old_send_logs(days=14)
-            if deleted_jobs or deleted_logs:
+            deleted_audit = store.delete_old_login_audit(days=90)
+            if deleted_jobs or deleted_logs or deleted_audit:
                 log.info(
-                    "Pruned %d old jobs and %d old send_log rows",
+                    "Pruned %d old jobs, %d old send_log rows, %d old login_audit rows",
                     deleted_jobs,
                     deleted_logs,
+                    deleted_audit,
                 )
         except Exception:
             log.exception("Retention prune failed")

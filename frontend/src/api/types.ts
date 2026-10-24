@@ -24,6 +24,26 @@ export interface LoginResponse {
   must_change_password: boolean;
 }
 
+export interface LoginStepResponse {
+  status: "totp_required" | "totp_setup_required";
+  pre_auth_token?: string;
+  totp_secret?: string;
+  totp_qr_data_uri?: string;
+}
+
+export interface TotpSetupConfirmResponse {
+  token: string;
+  user_id: number;
+  email: string;
+  role: string;
+  must_change_password: boolean;
+  backup_codes: string[];
+}
+
+export interface RegenerateBackupCodesResponse {
+  backup_codes: string[];
+}
+
 export interface Profile {
   id: number;
   label: string;
@@ -107,6 +127,9 @@ export interface AdminUser {
   created_at: string;
   profile_count: number;
   default_delay_seconds: number | null;
+  totp_enabled: boolean;
+  last_login_at: string | null;
+  last_login_ip: string | null;
 }
 
 export interface TrendPoint {
@@ -125,10 +148,20 @@ export interface AdminUserProfileStats {
   last_activity: string | null;
 }
 
+export interface LoginAuditEntry {
+  stage: string;
+  success: boolean;
+  ip: string | null;
+  detail: string;
+  at: string;
+}
+
 export interface AdminUserStats {
   total_sent: number;
   total_errors: number;
   total_attempts: number;
   last_activity: string | null;
   profiles: AdminUserProfileStats[];
+  distinct_login_ips_7d: number;
+  recent_logins: LoginAuditEntry[];
 }

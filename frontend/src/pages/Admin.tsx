@@ -64,6 +64,15 @@ export function Admin() {
     }
   }
 
+  const [totpResetId, setTotpResetId] = useState<number | null>(null);
+  const resetTotp = useMutation({
+    mutationFn: (id: number) => api.post(`/admin/users/${id}/reset-totp`),
+    onSuccess: (_data, id) => {
+      setTotpResetId(id);
+      qc.invalidateQueries({ queryKey: ["admin-users"] });
+    },
+  });
+
   const appSettings = useQuery({
     queryKey: ["app-settings"],
     queryFn: () => api.get<AppSettings>("/settings"),
@@ -278,23 +287,47 @@ export function Admin() {
                     {u.profile_count} profile{u.profile_count === 1 ? "" : "s"} · {u.created_at.slice(0, 10)} ·{" "}
                     {u.default_delay_seconds !== null ? `${u.default_delay_seconds}s delay` : "default delay"}
                   </div>
+                  <div style={{ fontSize: 11.5, color: "var(--text3)", marginTop: 2 }}>
+                    {u.last_login_at
+                      ? `Last login ${u.last_login_at.slice(0, 16).replace("T", " ")}${u.last_login_ip ? ` · ${u.last_login_ip}` : ""}`
+                      : "Never logged in"}
+                  </div>
                 </div>
-                <span
-                  style={{
-                    fontSize: 11,
-                    fontWeight: 700,
-                    padding: "4px 10px",
-                    borderRadius: 999,
-                    background: u.role === "admin" ? "var(--accent-soft)" : "var(--glass-2)",
-                    color: u.role === "admin" ? "var(--accent)" : "var(--text2)",
-                  }}
-                >
-                  {u.role}
-                </span>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-end" }}>
+                  <span
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 700,
+                      padding: "4px 10px",
+                      borderRadius: 999,
+                      background: u.role === "admin" ? "var(--accent-soft)" : "var(--glass-2)",
+                      color: u.role === "admin" ? "var(--accent)" : "var(--text2)",
+                    }}
+                  >
+                    {u.role}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: 10.5,
+                      fontWeight: 700,
+                      padding: "3px 9px",
+                      borderRadius: 999,
+                      background: u.totp_enabled ? "var(--ok-soft)" : "var(--glass-2)",
+                      color: u.totp_enabled ? "var(--ok)" : "var(--text3)",
+                    }}
+                  >
+                    {u.totp_enabled ? "2FA on" : "2FA not set up"}
+                  </span>
+                </div>
               </div>
               {resetResult?.id === u.id && (
                 <div style={{ background: "var(--ok-soft)", borderRadius: 14, padding: "10px 12px", fontSize: 12.5 }}>
                   New temp password: <strong style={{ fontFamily: "ui-monospace, monospace" }}>{resetResult.password}</strong>
+                </div>
+              )}
+              {totpResetId === u.id && (
+                <div style={{ background: "var(--ok-soft)", borderRadius: 14, padding: "10px 12px", fontSize: 12.5 }}>
+                  2FA reset — they'll set it up again on their next login.
                 </div>
               )}
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -314,6 +347,19 @@ export function Admin() {
                 <Button variant="outline" small onClick={() => handleReset(u)}>
                   Reset password
                 </Button>
+                {u.totp_enabled && (
+                  <Button
+                    variant="outline"
+                    small
+                    onClick={() => {
+                      if (window.confirm(`Reset 2FA for ${u.email}? They'll set it up again next login.`)) {
+                        resetTotp.mutate(u.id);
+                      }
+                    }}
+                  >
+                    Reset 2FA
+                  </Button>
+                )}
                 <Button
                   variant={u.is_active ? "danger" : "primary"}
                   small
@@ -385,6 +431,35 @@ export function Admin() {
                         {p.errors > 0 && <span style={{ color: "var(--bad)" }}> / {p.errors}</span>}
                       </div>
                       <div style={{ fontSize: 10, color: "var(--text3)", fontWeight: 700 }}>sent{p.errors > 0 ? " / errors" : ""}</div>
+                    </div>
+                  </div>
+                ))
+              )}
+
+              <div style={{ fontSize: 12.5, fontWeight: 800, color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.04em", padding: "6px 2px 0" }}>
+                Logins
+              </div>
+              {userStats.data.distinct_login_ips_7d > 2 && (
+                <div style={{ background: "var(--bad-soft)", borderRadius: 14, padding: "10px 12px", fontSize: 12.5, color: "var(--bad)", fontWeight: 600 }}>
+                  {userStats.data.distinct_login_ips_7d} different IPs in the last 7 days — worth
+                  checking this account isn't being shared.
+                </div>
+              )}
+              {userStats.data.recent_logins.length === 0 ? (
+                <div style={{ color: "var(--text3)", fontSize: 13, textAlign: "center", padding: "10px 0" }}>No login history yet.</div>
+              ) : (
+                userStats.data.recent_logins.map((l, i) => (
+                  <div
+                    key={i}
+                    style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 12.5, padding: "6px 2px", borderTop: i > 0 ? "1px solid var(--hair)" : undefined }}
+                  >
+                    <div style={{ color: l.success ? "var(--text2)" : "var(--bad)", fontWeight: 600 }}>
+                      {l.success ? "✓" : "✗"} {l.stage}
+                      {l.detail ? ` (${l.detail})` : ""}
+                    </div>
+                    <div style={{ color: "var(--text3)", textAlign: "right" }}>
+                      {l.at.slice(0, 16).replace("T", " ")}
+                      {l.ip ? ` · ${l.ip}` : ""}
                     </div>
                   </div>
                 ))

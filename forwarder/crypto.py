@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+import bcrypt
 from cryptography.fernet import Fernet
 
 from forwarder.config import get_settings
@@ -29,3 +30,19 @@ def encrypt(plaintext: str) -> bytes:
 
 def decrypt(ciphertext: bytes) -> str:
     return _fernet().decrypt(bytes(ciphertext)).decode()
+
+
+# Password/code hashing lives here (rather than forwarder.auth) so that
+# forwarder.storage -- which forwarder.auth itself imports -- can also use
+# verify_password (for backup-code checks) without a circular import.
+
+
+def hash_password(plain: str) -> str:
+    return bcrypt.hashpw(plain.encode(), bcrypt.gensalt()).decode()
+
+
+def verify_password(plain: str, hashed: str) -> bool:
+    try:
+        return bcrypt.checkpw(plain.encode(), hashed.encode())
+    except ValueError:
+        return False

@@ -26,12 +26,21 @@ def get_current_user(
     if creds is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing token")
     try:
-        user_id = decode_token(creds.credentials)
+        user_id, session_id = decode_token(creds.credentials)
     except Exception:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired token")
     user = store.get_user_by_id(user_id)
     if not user or not user.is_active:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Account not found or disabled")
+    # Single-active-session enforcement: a newer login (this device or any
+    # other) rotates users.session_id, which immediately invalidates every
+    # token minted before that rotation -- independent of this token's own
+    # (long) expiry.
+    if not user.session_id or user.session_id != session_id:
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            "Signed out — this account logged in elsewhere or was signed out.",
+        )
     return user
 
 

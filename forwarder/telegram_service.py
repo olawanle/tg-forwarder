@@ -142,6 +142,27 @@ class TelegramService:
         finally:
             await client.disconnect()
 
+    async def send_to_self(self, text: str) -> bool:
+        """DM the account's own Saved Messages -- used for login
+        notifications. Deliberately bypasses _send_one (built for broadcast
+        targets: numeric peer ids, deletion-verification, Stars checks,
+        none of which apply to messaging yourself). Returns False instead
+        of raising on any failure -- a notification is never allowed to
+        block or fail a login."""
+        if not self.has_session():
+            return False
+        client = self._client()
+        try:
+            await client.connect()
+            if not await client.is_user_authorized():
+                return False
+            await client.send_message("me", text)
+            return True
+        except Exception:
+            return False
+        finally:
+            await client.disconnect()
+
     async def request_code(self, phone: str) -> tuple[str, str]:
         """Returns (phone_code_hash, updated_session_string)."""
         client = self._client()

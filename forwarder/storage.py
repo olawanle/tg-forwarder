@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import secrets
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -11,6 +12,7 @@ import psycopg2.extras
 from psycopg2 import pool as pg_pool
 
 from forwarder import crypto
+from forwarder.crypto import verify_password
 
 # psycopg2 connections are relatively expensive to open, and Storage() is
 # constructed fresh on every Streamlit rerun and on every job-runner thread.
@@ -59,6 +61,10 @@ class UserRow:
     must_change_password: bool
     created_at: str
     default_delay_seconds: float | None = None
+    totp_enabled: bool = False
+    session_id: str | None = None
+    last_login_at: str | None = None
+    last_login_ip: str | None = None
 
 
 @dataclass
@@ -129,6 +135,18 @@ class UserStatsRow:
     total_attempts: int
     last_activity: str | None
     profiles: list[dict]
+
+
+@dataclass
+class LoginAuditRow:
+    id: int
+    identifier: str
+    user_id: int | None
+    stage: str
+    success: bool
+    ip: str | None
+    detail: str
+    at: str
 
 
 @dataclass
@@ -310,6 +328,56 @@ class Storage:
                     WHERE status IN ('queued', 'running');
                 """
             )
+            # 2FA (TOTP) + single-active-session enforcement.
+            # - totp_secret_enc/totp_enabled: NULL/FALSE until the user
+            #   completes setup; a fresh secret is generated and held pending
+            #   (not yet enabled) on first login until confirmed with a code.
+            # - session_id: identifies the one JWT currently considered
+            #   valid. Rotated on every completed login, so logging in
+            #   anywhere immediately invalidates whatever token the previous
+            #   session was holding -- see backend/deps.get_current_user.
+            cur.execute(
+                """
+                ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret_enc BYTEA;
+                ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+                ALTER TABLE users ADD COLUMN IF NOT EXISTS session_id TEXT;
+                ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ;
+                ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_ip TEXT;
+
+                CREATE TABLE IF NOT EXISTS totp_backup_codes (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    code_hash TEXT NOT NULL,
+                    used_at TIMESTAMPTZ,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                );
+                CREATE INDEX IF NOT EXISTS idx_totp_backup_codes_user ON totp_backup_codes(user_id);
+                """
+            )
+            # Every login attempt (password, TOTP, setup-confirm), success
+            # or failure. Two jobs: rate-limiting (count recent failures for
+            # an identifier before even checking credentials) and the
+            # admin-visible login history that's also the raw material for
+            # spotting account sharing/abuse (many distinct IPs for one
+            # user in a short window).
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS login_audit (
+                    id SERIAL PRIMARY KEY,
+                    identifier TEXT NOT NULL,
+                    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                    stage TEXT NOT NULL,
+                    success BOOLEAN NOT NULL,
+                    ip TEXT,
+                    detail TEXT NOT NULL DEFAULT '',
+                    at TIMESTAMPTZ NOT NULL DEFAULT now()
+                );
+                CREATE INDEX IF NOT EXISTS idx_login_audit_identifier_at
+                    ON login_audit(identifier, at DESC);
+                CREATE INDEX IF NOT EXISTS idx_login_audit_user_at
+                    ON login_audit(user_id, at DESC);
+                """
+            )
 
     # ---------------------------------------------------------------- users
 
@@ -342,6 +410,10 @@ class Storage:
             must_change_password=bool(row["must_change_password"]),
             created_at=str(row["created_at"]),
             default_delay_seconds=row["default_delay_seconds"],
+            totp_enabled=bool(row["totp_enabled"]),
+            session_id=row["session_id"],
+            last_login_at=str(row["last_login_at"]) if row["last_login_at"] else None,
+            last_login_ip=row["last_login_ip"],
         )
 
     def get_user_by_email(self, email: str) -> UserRow | None:
@@ -357,6 +429,188 @@ class Storage:
             cur.execute("SELECT * FROM users WHERE id = %s", (user_id,))
             row = cur.fetchone()
         return self._user_from_row(row) if row else None
+
+    # --------------------------------------------------- 2FA / sessions
+
+    def get_totp_secret(self, user_id: int) -> str | None:
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT totp_secret_enc FROM users WHERE id = %s", (user_id,))
+            row = cur.fetchone()
+        enc = row["totp_secret_enc"] if row else None
+        return crypto.decrypt(bytes(enc)) if enc else None
+
+    def set_pending_totp_secret(self, user_id: int, secret: str) -> None:
+        """Stores a freshly-generated secret without enabling 2FA yet --
+        enable_totp() flips it on only once the user proves they scanned it
+        by submitting a valid code."""
+        enc = crypto.encrypt(secret)
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE users SET totp_secret_enc = %s, totp_enabled = FALSE WHERE id = %s",
+                (psycopg2.Binary(enc), user_id),
+            )
+
+    def enable_totp(self, user_id: int) -> None:
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute("UPDATE users SET totp_enabled = TRUE WHERE id = %s", (user_id,))
+
+    def disable_totp(self, user_id: int) -> None:
+        """Admin-initiated reset: clears the secret and backup codes, so the
+        account goes through setup again on its next login."""
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE users
+                SET totp_secret_enc = NULL, totp_enabled = FALSE, session_id = NULL
+                WHERE id = %s
+                """,
+                (user_id,),
+            )
+            cur.execute("DELETE FROM totp_backup_codes WHERE user_id = %s", (user_id,))
+
+    def replace_backup_codes(self, user_id: int, code_hashes: list[str]) -> None:
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute("DELETE FROM totp_backup_codes WHERE user_id = %s", (user_id,))
+            for h in code_hashes:
+                cur.execute(
+                    "INSERT INTO totp_backup_codes(user_id, code_hash) VALUES (%s, %s)",
+                    (user_id, h),
+                )
+
+    def count_unused_backup_codes(self, user_id: int) -> int:
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) AS n FROM totp_backup_codes WHERE user_id = %s AND used_at IS NULL",
+                (user_id,),
+            )
+            return int(cur.fetchone()["n"])
+
+    def consume_backup_code(self, user_id: int, code: str) -> bool:
+        """Checks `code` against every unused backup code hash for this
+        user. Low volume (<=10 unused codes), so a Python-side bcrypt loop
+        is simple and fast enough -- no need for a lookup index on the
+        hash itself."""
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, code_hash FROM totp_backup_codes WHERE user_id = %s AND used_at IS NULL",
+                (user_id,),
+            )
+            rows = cur.fetchall()
+            for row in rows:
+                if verify_password(code, row["code_hash"]):
+                    cur.execute(
+                        "UPDATE totp_backup_codes SET used_at = now() WHERE id = %s",
+                        (row["id"],),
+                    )
+                    return True
+        return False
+
+    def rotate_session(self, user_id: int, login_ip: str | None = None) -> str:
+        """Generates and stores a new session id, superseding whatever
+        token/session was previously valid for this user -- this is the
+        single-active-session enforcement: logging in anywhere invalidates
+        every other device's token the moment this runs."""
+        session_id = secrets.token_urlsafe(32)
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE users
+                SET session_id = %s, last_login_at = now(), last_login_ip = %s
+                WHERE id = %s
+                """,
+                (session_id, login_ip, user_id),
+            )
+        return session_id
+
+    def clear_session(self, user_id: int) -> None:
+        """Explicit logout: the token the caller was holding stops working
+        immediately instead of staying valid until it naturally expires."""
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute("UPDATE users SET session_id = NULL WHERE id = %s", (user_id,))
+
+    # ------------------------------------------------------------ login audit
+
+    def record_login_attempt(
+        self,
+        identifier: str,
+        stage: str,
+        success: bool,
+        ip: str | None = None,
+        user_id: int | None = None,
+        detail: str = "",
+    ) -> None:
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO login_audit(identifier, user_id, stage, success, ip, detail)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (identifier.strip().lower(), user_id, stage, success, ip, detail),
+            )
+
+    def count_recent_failed_attempts(self, identifier: str, minutes: int = 15) -> int:
+        """Failures across every login stage for this identifier -- an
+        attacker bouncing between /auth/login and /auth/login/totp still
+        gets throttled as one actor."""
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COUNT(*) AS n FROM login_audit
+                WHERE identifier = %s AND success = FALSE
+                  AND at > now() - (%s || ' minutes')::interval
+                """,
+                (identifier.strip().lower(), minutes),
+            )
+            return int(cur.fetchone()["n"])
+
+    def list_login_audit(self, user_id: int, limit: int = 20) -> list[LoginAuditRow]:
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT * FROM login_audit
+                WHERE user_id = %s
+                ORDER BY id DESC
+                LIMIT %s
+                """,
+                (user_id, limit),
+            )
+            rows = cur.fetchall()
+        return [
+            LoginAuditRow(
+                id=r["id"],
+                identifier=r["identifier"],
+                user_id=r["user_id"],
+                stage=r["stage"],
+                success=bool(r["success"]),
+                ip=r["ip"],
+                detail=r["detail"],
+                at=str(r["at"]),
+            )
+            for r in rows
+        ]
+
+    def distinct_login_ips(self, user_id: int, days: int = 7) -> int:
+        """A rough abuse signal: how many different IPs successfully logged
+        into this account recently. One person on a stable connection is
+        usually 1-3; many more suggests the credentials are shared."""
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COUNT(DISTINCT ip) AS n FROM login_audit
+                WHERE user_id = %s AND success = TRUE AND ip IS NOT NULL
+                  AND at > now() - (%s || ' days')::interval
+                """,
+                (user_id, days),
+            )
+            return int(cur.fetchone()["n"])
+
+    def delete_old_login_audit(self, days: int = 90) -> int:
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM login_audit WHERE at < now() - (%s || ' days')::interval",
+                (days,),
+            )
+            return cur.rowcount
 
     def set_user_default_delay(self, user_id: int, value: float | None) -> None:
         with self._conn() as conn, conn.cursor() as cur:
