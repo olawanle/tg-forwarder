@@ -123,10 +123,29 @@ function GroupsTab({ profileId }: { profileId: number }) {
   );
 }
 
+const SKIP_REASON_LABELS: Record<string, string> = {
+  auto_deleted: "wiped",
+  stars_required: "stars",
+  skipped_stars: "stars",
+  skipped_slowmode: "slowmode",
+};
+
+function reasonLabel(reason: string): string {
+  return SKIP_REASON_LABELS[reason] ?? reason.replace(/_/g, " ");
+}
+
+// s.at is Python's str(datetime) ("2026-10-25 09:27:08.101895+00:00"), not
+// ISO -- trim straight to "YYYY-MM-DD HH:MM" instead of showing microseconds
+// and a UTC offset, which wraps awkwardly in the card's narrow timestamp line.
+function formatSkipAt(at: string): string {
+  return at.slice(0, 16);
+}
+
 function BlacklistTab({ profileId }: { profileId: number }) {
   const qc = useQueryClient();
-  const [busy, setBusy] = useState(false);
+  const [busyId, setBusyId] = useState<string | "all" | null>(null);
   const [notice, setNotice] = useState("");
+  const [confirmClear, setConfirmClear] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ["skips", profileId],
@@ -142,28 +161,35 @@ function BlacklistTab({ profileId }: { profileId: number }) {
 
   const clearAll = useMutation({
     mutationFn: () => api.del(`/profiles/${profileId}/skips`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["skips", profileId] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["skips", profileId] });
+      setConfirmClear(false);
+    },
   });
 
   async function leaveAll() {
-    setBusy(true);
+    setBusyId("all");
     setNotice("");
     try {
       const res = await api.post<{ left: { target_id: string; name: string }[]; failed: { target_id: string; name: string; detail: string }[] }>(
         `/profiles/${profileId}/leave-groups`,
         {},
       );
-      setNotice(`Left ${res.left.length} group(s)${res.failed.length ? `, ${res.failed.length} failed` : ""}.`);
+      let msg = `Left ${res.left.length} group(s).`;
+      if (res.failed.length > 0) {
+        msg += ` Failed: ${res.failed.map((f) => `${f.name} (${f.detail})`).join(", ")}`;
+      }
+      setNotice(msg);
       qc.invalidateQueries({ queryKey: ["skips", profileId] });
     } catch (err) {
       setNotice(err instanceof ApiError ? err.message : "Could not leave groups.");
     } finally {
-      setBusy(false);
+      setBusyId(null);
     }
   }
 
   async function leaveOne(targetId: string) {
-    setBusy(true);
+    setBusyId(targetId);
     setNotice("");
     try {
       const res = await api.post<{ left: unknown[]; failed: { detail: string }[] }>(
@@ -177,7 +203,7 @@ function BlacklistTab({ profileId }: { profileId: number }) {
     } catch (err) {
       setNotice(err instanceof ApiError ? err.message : "Could not leave this group.");
     } finally {
-      setBusy(false);
+      setBusyId(null);
     }
   }
 
@@ -191,10 +217,10 @@ function BlacklistTab({ profileId }: { profileId: number }) {
         the group entirely — you'd need to be re-invited to rejoin.
       </div>
 
-      <Button variant="danger" onClick={leaveAll} disabled={busy}>
-        Leave all {skips.length} blacklisted group(s)
+      <Button variant="danger" onClick={leaveAll} disabled={busyId !== null}>
+        {busyId === "all" ? "Leaving…" : `Leave all ${skips.length} blacklisted group(s)`}
       </Button>
-      {notice && <div style={{ fontSize: 12.5, color: "var(--text2)", padding: "0 4px" }}>{notice}</div>}
+      {notice && <div style={{ fontSize: 12.5, color: "var(--text2)", padding: "0 4px", lineHeight: 1.5 }}>{notice}</div>}
 
       {skips.map((s) => (
         <GlassCard key={s.target_id}>
@@ -205,7 +231,7 @@ function BlacklistTab({ profileId }: { profileId: number }) {
                 <div style={{ fontSize: 14.5, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {s.name}
                 </div>
-                <div style={{ fontSize: 12, color: "var(--text3)", marginTop: 2 }}>{s.at}</div>
+                <div style={{ fontSize: 12, color: "var(--text3)", marginTop: 2 }}>{formatSkipAt(s.at)}</div>
               </div>
               <span
                 style={{
@@ -215,9 +241,11 @@ function BlacklistTab({ profileId }: { profileId: number }) {
                   borderRadius: 999,
                   background: "var(--warn-soft)",
                   color: "var(--warn)",
+                  whiteSpace: "nowrap",
+                  flexShrink: 0,
                 }}
               >
-                {s.reason}
+                {reasonLabel(s.reason)}
               </span>
             </div>
             <div
@@ -233,20 +261,39 @@ function BlacklistTab({ profileId }: { profileId: number }) {
               {s.detail}
             </div>
             <div style={{ display: "flex", gap: 8 }}>
-              <Button variant="outline" small onClick={() => restore.mutate(s.target_id)} disabled={busy}>
+              <Button variant="outline" small onClick={() => restore.mutate(s.target_id)} disabled={busyId !== null}>
                 Restore
               </Button>
-              <Button variant="danger" small onClick={() => leaveOne(s.target_id)} disabled={busy}>
-                Leave group
+              <Button variant="danger" small onClick={() => leaveOne(s.target_id)} disabled={busyId !== null}>
+                {busyId === s.target_id ? "Leaving…" : "Leave group"}
               </Button>
             </div>
           </div>
         </GlassCard>
       ))}
 
-      <Button variant="outline" onClick={() => clearAll.mutate()} disabled={busy}>
-        Clear entire blacklist (keeps you in the groups)
-      </Button>
+      {confirmClear ? (
+        <GlassCard>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div style={{ fontSize: 13, color: "var(--text2)", lineHeight: 1.5 }}>
+              Clear the entire blacklist? Every group above becomes eligible for broadcasts again
+              — you stay a member of all of them, nothing is left.
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <Button variant="outline" small onClick={() => setConfirmClear(false)}>
+                Cancel
+              </Button>
+              <Button variant="danger" small onClick={() => clearAll.mutate()} disabled={clearAll.isPending}>
+                {clearAll.isPending ? "Clearing…" : "Yes, clear it"}
+              </Button>
+            </div>
+          </div>
+        </GlassCard>
+      ) : (
+        <Button variant="outline" onClick={() => setConfirmClear(true)} disabled={busyId !== null}>
+          Clear entire blacklist (keeps you in the groups)
+        </Button>
+      )}
     </>
   );
 }

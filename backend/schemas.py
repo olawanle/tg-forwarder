@@ -60,6 +60,7 @@ class ChangePasswordRequest(BaseModel):
 class ProfileOut(BaseModel):
     id: int
     label: str
+    phone: str | None
     draft_message: str
     draft_saved_message_id: int | None
     draft_mode: str
@@ -269,6 +270,7 @@ class LoginAuditOut(BaseModel):
 class AdminUserProfileStatsOut(BaseModel):
     id: int
     label: str
+    phone: str | None
     sent: int
     errors: int
     attempts: int
