@@ -9,6 +9,7 @@ def profile_out(p: ProfileRow) -> schemas.ProfileOut:
     return schemas.ProfileOut(
         id=p.id,
         label=p.label,
+        phone=p.phone,
         draft_message=p.draft_message,
         draft_saved_message_id=p.draft_saved_message_id,
         draft_mode=p.draft_mode,

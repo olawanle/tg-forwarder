@@ -131,9 +131,10 @@ async def phone_verify_code(
     reconnect_id = state.get("reconnect_profile_id")
     if reconnect_id is not None:
         store.update_profile_session(reconnect_id, session)
+        store.update_profile_phone(reconnect_id, state["phone"])
         profile_id = reconnect_id
     else:
-        profile_id = store.create_profile(user.id, state["label"], session)
+        profile_id = store.create_profile(user.id, state["label"], session, phone=state["phone"])
     WIZARD_STORE.pop(body.wizard_token, None)
     return schemas.PhoneVerifyCodeResponse(needs_password=False, profile_id=profile_id)
 
@@ -156,8 +157,9 @@ async def phone_verify_password(
     reconnect_id = state.get("reconnect_profile_id")
     if reconnect_id is not None:
         store.update_profile_session(reconnect_id, session)
+        store.update_profile_phone(reconnect_id, state["phone"])
         profile_id = reconnect_id
     else:
-        profile_id = store.create_profile(user.id, state["label"], session)
+        profile_id = store.create_profile(user.id, state["label"], session, phone=state["phone"])
     WIZARD_STORE.pop(body.wizard_token, None)
     return schemas.PhoneVerifyPasswordResponse(profile_id=profile_id)

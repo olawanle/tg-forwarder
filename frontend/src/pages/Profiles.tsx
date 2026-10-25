@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { GlassCard } from "../components/GlassCard";
+import { BottomSheet } from "../components/BottomSheet";
 import { AvatarBadge, ToggleSwitch } from "../components/Small";
 import { IconButton } from "../components/Small";
 import { Button } from "../components/Button";
@@ -19,19 +20,18 @@ export function Profiles() {
   const { profiles, activeProfile, setActiveProfileId, isLoading } = useProfiles();
   const [wizardOpen, setWizardOpen] = useState(false);
   const [reconnectProfile, setReconnectProfile] = useState<Profile | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<Profile | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [deleteError, setDeleteError] = useState("");
   const { theme, toggle } = useTheme();
 
   async function removeProfile(p: Profile) {
-    if (!window.confirm(`Remove "${p.label}"? This also deletes its send history and job logs — this can't be undone.`)) {
-      return;
-    }
     setDeleteError("");
     setBusyId(p.id);
     try {
       await api.del(`/profiles/${p.id}`);
       qc.invalidateQueries({ queryKey: ["profiles"] });
+      setConfirmDelete(null);
     } catch (err) {
       setDeleteError(err instanceof ApiError ? err.message : "Could not remove this profile.");
     } finally {
@@ -66,6 +66,11 @@ export function Profiles() {
               <AvatarBadge seed={p.label} size={48} fontSize={16} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 15.5, fontWeight: 800, letterSpacing: "-0.02em" }}>{p.label}</div>
+                {p.phone && (
+                  <div className="mono" style={{ fontSize: 12, color: "var(--text3)", marginTop: 2 }}>
+                    {p.phone}
+                  </div>
+                )}
                 <span
                   style={{
                     display: "inline-flex",
@@ -143,7 +148,8 @@ export function Profiles() {
                 aria-label={`Remove ${p.label}`}
                 onClick={(e) => {
                   e.stopPropagation();
-                  removeProfile(p);
+                  setDeleteError("");
+                  setConfirmDelete(p);
                 }}
                 disabled={busyId === p.id}
                 style={{
@@ -168,8 +174,6 @@ export function Profiles() {
         ))
       )}
 
-      {deleteError && <div style={{ color: "var(--bad)", fontSize: 13, fontWeight: 600, padding: "0 4px" }}>{deleteError}</div>}
-
       <Button variant="outline" onClick={() => setWizardOpen(true)}>
         + Add a Telegram profile
       </Button>
@@ -187,6 +191,41 @@ export function Profiles() {
             setReconnectProfile(null);
           }}
         />
+      )}
+
+      {confirmDelete && (
+        <BottomSheet onClose={() => (busyId ? undefined : setConfirmDelete(null))}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 13 }}>
+              <AvatarBadge seed={confirmDelete.label} size={44} fontSize={15} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 16, fontWeight: 800, letterSpacing: "-0.02em" }}>
+                  Remove "{confirmDelete.label}"?
+                </div>
+                {confirmDelete.phone && (
+                  <div className="mono" style={{ fontSize: 12, color: "var(--text3)", marginTop: 2 }}>
+                    {confirmDelete.phone}
+                  </div>
+                )}
+              </div>
+            </div>
+            <div style={{ fontSize: 13.5, color: "var(--text2)", lineHeight: 1.55 }}>
+              This deletes its send history, job logs, and blacklist for good. The Telegram
+              account itself isn't touched — you can reconnect it later by adding it again.
+              <br />
+              <strong style={{ color: "var(--bad)" }}>This can't be undone.</strong>
+            </div>
+            {deleteError && <div style={{ color: "var(--bad)", fontSize: 13, fontWeight: 600 }}>{deleteError}</div>}
+            <div style={{ display: "flex", gap: 10 }}>
+              <Button variant="outline" onClick={() => setConfirmDelete(null)} disabled={busyId === confirmDelete.id}>
+                Cancel
+              </Button>
+              <Button variant="danger" onClick={() => removeProfile(confirmDelete)} disabled={busyId === confirmDelete.id}>
+                {busyId === confirmDelete.id ? "Removing…" : "Remove profile"}
+              </Button>
+            </div>
+          </div>
+        </BottomSheet>
       )}
 
       {user?.role === "admin" && (

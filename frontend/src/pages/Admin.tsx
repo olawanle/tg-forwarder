@@ -421,6 +421,11 @@ export function Admin() {
                     <AvatarBadge seed={p.label} size={32} fontSize={12} />
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 13.5, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.label}</div>
+                      {p.phone && (
+                        <div className="mono" style={{ fontSize: 11, color: "var(--text3)", marginTop: 1 }}>
+                          {p.phone}
+                        </div>
+                      )}
                       <div style={{ fontSize: 11.5, color: "var(--text3)", marginTop: 1 }}>
                         {p.last_activity ? p.last_activity.slice(0, 16).replace("T", " ") : "no activity yet"}
                       </div>

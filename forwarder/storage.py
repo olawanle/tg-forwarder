@@ -75,6 +75,7 @@ class ProfileRow:
     telegram_session: str
     telegram_api_id: int | None
     telegram_api_hash: str | None
+    phone: str | None
     draft_message: str
     draft_saved_message_id: int | None
     draft_mode: str
@@ -378,6 +379,10 @@ class Storage:
                     ON login_audit(user_id, at DESC);
                 """
             )
+            # The Telegram phone number used to log this account in, so the
+            # Profiles page can show which number each profile actually is
+            # (it's otherwise invisible once the session string exists).
+            cur.execute("ALTER TABLE profiles ADD COLUMN IF NOT EXISTS phone TEXT;")
 
     # ---------------------------------------------------------------- users
 
@@ -644,7 +649,7 @@ class Storage:
             cur.execute(
                 """
                 SELECT
-                    p.id, p.label,
+                    p.id, p.label, p.phone,
                     COUNT(sl.id) FILTER (WHERE sl.status = 'ok') AS sent,
                     COUNT(sl.id) FILTER (WHERE sl.status = 'error') AS errors,
                     COUNT(sl.id) AS attempts,
@@ -652,7 +657,7 @@ class Storage:
                 FROM profiles p
                 LEFT JOIN send_log sl ON sl.profile_id = p.id
                 WHERE p.user_id = %s
-                GROUP BY p.id, p.label
+                GROUP BY p.id, p.label, p.phone
                 ORDER BY p.id ASC
                 """,
                 (user_id,),
@@ -668,6 +673,7 @@ class Storage:
                 {
                     "id": r["id"],
                     "label": r["label"],
+                    "phone": r["phone"],
                     "sent": int(r["sent"] or 0),
                     "errors": int(r["errors"] or 0),
                     "attempts": int(r["attempts"] or 0),
@@ -706,17 +712,18 @@ class Storage:
         telegram_session: str,
         telegram_api_id: int | None = None,
         telegram_api_hash: str | None = None,
+        phone: str | None = None,
     ) -> int:
         enc = crypto.encrypt(telegram_session)
         with self._conn() as conn, conn.cursor() as cur:
             cur.execute(
                 """
                 INSERT INTO profiles(
-                    user_id, label, telegram_session_enc, telegram_api_id, telegram_api_hash
-                ) VALUES (%s, %s, %s, %s, %s)
+                    user_id, label, telegram_session_enc, telegram_api_id, telegram_api_hash, phone
+                ) VALUES (%s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
-                (user_id, label, psycopg2.Binary(enc), telegram_api_id, telegram_api_hash),
+                (user_id, label, psycopg2.Binary(enc), telegram_api_id, telegram_api_hash, phone),
             )
             return int(cur.fetchone()["id"])
 
@@ -729,6 +736,7 @@ class Storage:
             telegram_session=crypto.decrypt(row["telegram_session_enc"]),
             telegram_api_id=row["telegram_api_id"],
             telegram_api_hash=row["telegram_api_hash"],
+            phone=row["phone"],
             draft_message=row["draft_message"] or "",
             draft_saved_message_id=row["draft_saved_message_id"],
             draft_mode=row["draft_mode"] or "text",
@@ -787,6 +795,13 @@ class Storage:
                 WHERE id = %s
                 """,
                 (psycopg2.Binary(enc), profile_id),
+            )
+
+    def update_profile_phone(self, profile_id: int, phone: str) -> None:
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE profiles SET phone = %s, updated_at = now() WHERE id = %s",
+                (phone, profile_id),
             )
 
     def set_draft_message(self, profile_id: int, message: str) -> None:

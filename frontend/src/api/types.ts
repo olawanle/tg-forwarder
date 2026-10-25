@@ -47,6 +47,7 @@ export interface RegenerateBackupCodesResponse {
 export interface Profile {
   id: number;
   label: string;
+  phone: string | null;
   draft_message: string;
   draft_saved_message_id: number | null;
   draft_mode: string;
@@ -142,6 +143,7 @@ export interface TrendPoint {
 export interface AdminUserProfileStats {
   id: number;
   label: string;
+  phone: string | null;
   sent: number;
   errors: number;
   attempts: number;
