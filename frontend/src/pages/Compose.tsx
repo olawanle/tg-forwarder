@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { GlassCard } from "../components/GlassCard";
+import { GlassHero } from "../components/GlassHero";
 import { Button } from "../components/Button";
 import { Textarea } from "../components/Field";
 import { SegmentedTabs, ToggleSwitch } from "../components/Small";
@@ -376,7 +377,7 @@ export function Compose() {
       </div>
 
       <div>
-      <GlassCard>
+      <GlassHero>
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <Slider label="Delay between sends" value={delay} min={0} max={60} step={1} suffix="s" onChange={setDelay} />
           <Slider
@@ -410,7 +411,7 @@ export function Compose() {
             />
           )}
         </div>
-      </GlassCard>
+      </GlassHero>
 
       {error && <div style={{ color: "var(--bad)", fontSize: 13, fontWeight: 600 }}>{error}</div>}
       {saveNotice && <div style={{ color: "var(--ok)", fontSize: 13, fontWeight: 600 }}>{saveNotice}</div>}

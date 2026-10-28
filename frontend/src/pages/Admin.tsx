@@ -73,6 +73,12 @@ export function Admin() {
     },
   });
 
+  const setTotpExempt = useMutation({
+    mutationFn: ({ id, exempt }: { id: number; exempt: boolean }) =>
+      api.post(`/admin/users/${id}/totp-exempt`, { exempt }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin-users"] }),
+  });
+
   const appSettings = useQuery({
     queryKey: ["app-settings"],
     queryFn: () => api.get<AppSettings>("/settings"),
@@ -312,11 +318,15 @@ export function Admin() {
                       fontWeight: 700,
                       padding: "3px 9px",
                       borderRadius: 999,
-                      background: u.totp_enabled ? "var(--ok-soft)" : "var(--glass-2)",
-                      color: u.totp_enabled ? "var(--ok)" : "var(--text3)",
+                      background: u.totp_exempt
+                        ? "var(--warn-soft)"
+                        : u.totp_enabled
+                          ? "var(--ok-soft)"
+                          : "var(--glass-2)",
+                      color: u.totp_exempt ? "var(--warn)" : u.totp_enabled ? "var(--ok)" : "var(--text3)",
                     }}
                   >
-                    {u.totp_enabled ? "2FA on" : "2FA not set up"}
+                    {u.totp_exempt ? "2FA exempt" : u.totp_enabled ? "2FA on" : "2FA not set up"}
                   </span>
                 </div>
               </div>
@@ -347,7 +357,7 @@ export function Admin() {
                 <Button variant="outline" small onClick={() => handleReset(u)}>
                   Reset password
                 </Button>
-                {u.totp_enabled && (
+                {u.totp_enabled && !u.totp_exempt && (
                   <Button
                     variant="outline"
                     small
@@ -358,6 +368,37 @@ export function Admin() {
                     }}
                   >
                     Reset 2FA
+                  </Button>
+                )}
+                {u.totp_exempt ? (
+                  <Button
+                    variant="outline"
+                    small
+                    disabled={setTotpExempt.isPending}
+                    onClick={() => {
+                      if (window.confirm(`Require 2FA again for ${u.email}? They'll set it up from scratch next login.`)) {
+                        setTotpExempt.mutate({ id: u.id, exempt: false });
+                      }
+                    }}
+                  >
+                    Require 2FA again
+                  </Button>
+                ) : (
+                  <Button
+                    variant="outline"
+                    small
+                    disabled={setTotpExempt.isPending}
+                    onClick={() => {
+                      if (
+                        window.confirm(
+                          `Remove the authenticator requirement for ${u.email}? They'll be able to log in with just their password — no 2FA at all — until you require it again.`,
+                        )
+                      ) {
+                        setTotpExempt.mutate({ id: u.id, exempt: true });
+                      }
+                    }}
+                  >
+                    Remove authenticator
                   </Button>
                 )}
                 <Button

@@ -81,6 +81,17 @@ def login(body: schemas.LoginRequest, request: Request, store: Storage = Depends
         )
     store.record_login_attempt(identifier, "password", True, ip=ip, user_id=user.id)
 
+    if user.totp_exempt:
+        result = _finish_login(store, user, ip)
+        return schemas.LoginStepResponse(
+            status="done",
+            token=result.token,
+            user_id=result.user_id,
+            email=result.email,
+            role=result.role,
+            must_change_password=result.must_change_password,
+        )
+
     pre_auth_token = create_pre_auth_token(user.id)
     if user.totp_enabled:
         return schemas.LoginStepResponse(status="totp_required", pre_auth_token=pre_auth_token)

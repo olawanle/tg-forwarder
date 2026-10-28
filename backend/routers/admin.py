@@ -35,6 +35,7 @@ def list_users(_: UserRow = Depends(require_admin), store: Storage = Depends(get
                 profile_count=len(profiles),
                 default_delay_seconds=u.default_delay_seconds,
                 totp_enabled=u.totp_enabled,
+                totp_exempt=u.totp_exempt,
                 last_login_at=u.last_login_at,
                 last_login_ip=u.last_login_ip,
             )
@@ -62,6 +63,7 @@ def set_user_default_delay(
         profile_count=len(store.list_profiles_for_user(user_id)),
         default_delay_seconds=body.default_delay_seconds,
         totp_enabled=user.totp_enabled,
+        totp_exempt=user.totp_exempt,
         last_login_at=user.last_login_at,
         last_login_ip=user.last_login_ip,
     )
@@ -127,6 +129,39 @@ def reset_totp(
     and active session. They set up 2FA again from scratch on next login."""
     store.disable_totp(user_id)
     return {"ok": True}
+
+
+@router.post("/users/{user_id}/totp-exempt", response_model=schemas.AdminUserOut)
+def set_totp_exempt(
+    user_id: int,
+    body: schemas.AdminSetTotpExemptRequest,
+    _: UserRow = Depends(require_admin),
+    store: Storage = Depends(get_store),
+):
+    """Different from reset-totp: that still requires the user to enroll in
+    2FA again on their next login. This removes the requirement entirely --
+    they log in with just a password, like 2FA didn't exist for this
+    account. Granting the exemption also clears any existing secret/backup
+    codes; there's nothing left for them to use or lose."""
+    user = store.get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    store.set_totp_exempt(user_id, body.exempt)
+    user = store.get_user_by_id(user_id)
+    assert user is not None
+    return schemas.AdminUserOut(
+        id=user.id,
+        email=user.email,
+        role=user.role,
+        is_active=user.is_active,
+        created_at=user.created_at,
+        profile_count=len(store.list_profiles_for_user(user_id)),
+        default_delay_seconds=user.default_delay_seconds,
+        totp_enabled=user.totp_enabled,
+        totp_exempt=user.totp_exempt,
+        last_login_at=user.last_login_at,
+        last_login_ip=user.last_login_ip,
+    )
 
 
 @router.get("/users/{user_id}/profiles", response_model=list[schemas.ProfileOut])

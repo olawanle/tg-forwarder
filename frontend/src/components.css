@@ -70,7 +70,7 @@
     var(--shadow-lg),
     inset 0 1px 0 var(--glass-highlight),
     var(--glass-rim),
-    0 0 0 1px rgba(5, 150, 105, 0.18);
+    0 0 0 1px rgba(59, 130, 246, 0.18);
 }
 .glass-card--premium::before {
   content: "";
@@ -84,6 +84,22 @@
   mask-composite: exclude;
   opacity: 0.6;
   pointer-events: none;
+}
+
+/* The marquee cards (GlassHero.tsx): backdrop-filter, box-shadow and
+   background-color are all set per-frame by GlassEngine.ts (real SVG
+   displacement + chromatic aberration), not here -- this just provides the
+   static layout the engine's geometry assumes (24px panel radius) plus a
+   sane unstyled fallback for the instant before the engine mounts. */
+.glass-hero {
+  position: relative;
+  border-radius: 24px;
+  corner-shape: squircle;
+  overflow: hidden;
+  padding: 24px;
+  color: var(--text);
+  background: var(--glass-3);
+  box-shadow: var(--shadow-lg), inset 0 1px 0 var(--glass-highlight);
 }
 
 .eyebrow-premium {
@@ -322,9 +338,9 @@ textarea.field {
    only showing up in dark mode. */
 .bottom-nav {
   background: var(--chrome-bg);
-  border: 1px solid rgba(134, 239, 172, 0.12);
+  border: 1px solid rgba(147, 197, 253, 0.12);
   border-radius: 999px;
-  box-shadow: var(--shadow-lg), inset 0 1px 0 rgba(173, 255, 214, 0.1);
+  box-shadow: var(--shadow-lg), inset 0 1px 0 rgba(147, 197, 253, 0.1);
   padding: 11px 8px 10px;
   display: flex;
   pointer-events: auto;
@@ -566,8 +582,8 @@ textarea.field {
     padding: 22px 14px;
     background: var(--chrome-bg);
     color: var(--chrome-text);
-    border-right: 1px solid rgba(134, 239, 172, 0.1);
-    box-shadow: inset -1px 0 0 rgba(173, 255, 214, 0.08);
+    border-right: 1px solid rgba(147, 197, 253, 0.1);
+    box-shadow: inset -1px 0 0 rgba(147, 197, 253, 0.08);
     z-index: 10;
   }
   .d-brand {
@@ -605,7 +621,7 @@ textarea.field {
     text-decoration: none;
   }
   .d-nav-item.active {
-    background: linear-gradient(135deg, rgba(52, 211, 153, 0.18), transparent);
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.18), transparent);
     color: var(--accent2);
   }
   .d-nav-item svg {
@@ -620,7 +636,7 @@ textarea.field {
     gap: 10px;
     padding: 10px;
     border-radius: 14px;
-    background: rgba(134, 239, 172, 0.07);
+    background: rgba(147, 197, 253, 0.07);
     margin-top: 10px;
     cursor: pointer;
     border: none;

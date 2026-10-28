@@ -25,10 +25,16 @@ export interface LoginResponse {
 }
 
 export interface LoginStepResponse {
-  status: "totp_required" | "totp_setup_required";
+  status: "totp_required" | "totp_setup_required" | "done";
   pre_auth_token?: string;
   totp_secret?: string;
   totp_qr_data_uri?: string;
+  // status === "done" only (an admin exempted this account from 2FA):
+  token?: string;
+  user_id?: number;
+  email?: string;
+  role?: string;
+  must_change_password?: boolean;
 }
 
 export interface TotpSetupConfirmResponse {
@@ -129,6 +135,7 @@ export interface AdminUser {
   profile_count: number;
   default_delay_seconds: number | null;
   totp_enabled: boolean;
+  totp_exempt: boolean;
   last_login_at: string | null;
   last_login_ip: string | null;
 }

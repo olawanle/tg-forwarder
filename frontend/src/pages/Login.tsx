@@ -96,7 +96,18 @@ export function Login() {
     setBusy(true);
     try {
       const res = await api.post<LoginStepResponse>("/auth/login", { email, password });
-      if (res.status === "totp_required") {
+      if (res.status === "done") {
+        // Admin granted this account a 2FA exemption -- no further step.
+        completeLogin({
+          token: res.token!,
+          user_id: res.user_id!,
+          email: res.email!,
+          role: res.role!,
+          must_change_password: res.must_change_password!,
+          backup_codes: [],
+        });
+        navigate("/home", { replace: true });
+      } else if (res.status === "totp_required") {
         setStep({ kind: "totp", preAuthToken: res.pre_auth_token! });
       } else {
         setStep({
@@ -324,7 +335,7 @@ export function Login() {
               left: -60,
               transform: "translateY(-50%)",
               borderRadius: "50%",
-              border: "1.5px solid #10b981",
+              border: "1.5px solid #3b82f6",
               animation: "pulseRing 3.4s cubic-bezier(.2,.6,.4,1) infinite",
             }}
           />
@@ -337,7 +348,7 @@ export function Login() {
               left: -60,
               transform: "translateY(-50%)",
               borderRadius: "50%",
-              border: "1.5px solid #86efac",
+              border: "1.5px solid #93c5fd",
               animation: "pulseRing 3.4s cubic-bezier(.2,.6,.4,1) infinite",
               animationDelay: "1.1s",
             }}
@@ -351,7 +362,7 @@ export function Login() {
                 borderRadius: 16,
                 background: "var(--accent-grad)",
                 boxShadow:
-                  "0 16px 34px rgba(16,185,129,0.35), 0 0 0 1px rgba(134,239,172,0.4), 0 8px 22px rgba(134,239,172,0.14)",
+                  "0 16px 34px rgba(59,130,246,0.35), 0 0 0 1px rgba(147,197,253,0.4), 0 8px 22px rgba(147,197,253,0.14)",
                 marginBottom: 14,
               }}
             >
@@ -366,11 +377,11 @@ export function Login() {
                 fontWeight: 800,
                 letterSpacing: "0.09em",
                 textTransform: "uppercase",
-                color: "#6ee7a8",
+                color: "#93c5fd",
                 marginBottom: 12,
               }}
             >
-              <span style={{ width: 5, height: 5, borderRadius: "50%", background: "linear-gradient(135deg, #10b981, #d9f99d)" }} />
+              <span style={{ width: 5, height: 5, borderRadius: "50%", background: "linear-gradient(135deg, #3b82f6, #93c5fd)" }} />
               Private workspace
             </div>
             <div style={{ fontSize: 38, fontWeight: 800, letterSpacing: "-0.03em", lineHeight: 1.08, textWrap: "balance" }}>
@@ -380,7 +391,7 @@ export function Login() {
               <br />
               at once.
             </div>
-            <div style={{ fontSize: 14, color: "#8fae9e", marginTop: 14, maxWidth: 360, lineHeight: 1.6 }}>
+            <div style={{ fontSize: 14, color: "#94a3b8", marginTop: 14, maxWidth: 360, lineHeight: 1.6 }}>
               Forwarder keeps every Telegram and Discord profile you manage in sync — queue a send,
               watch it land in real time.
             </div>
