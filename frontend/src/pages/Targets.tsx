@@ -24,7 +24,7 @@ export function Targets() {
   }
 
   return (
-    <div className="page">
+    <div className="page page--wide">
       <div>
         <h1 className="page-title">Targets</h1>
         <div className="page-subtitle">
@@ -99,7 +99,7 @@ function GroupsTab({ profileId }: { profileId: number }) {
               {query.isFetching ? "Refreshing…" : "Refresh"}
             </button>
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <div className="card-grid">
             {filtered.map((g) => (
               <GlassCard key={g.id}>
                 <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -222,55 +222,57 @@ function BlacklistTab({ profileId }: { profileId: number }) {
       </Button>
       {notice && <div style={{ fontSize: 12.5, color: "var(--text2)", padding: "0 4px", lineHeight: 1.5 }}>{notice}</div>}
 
-      {skips.map((s) => (
-        <GlassCard key={s.target_id}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 11 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <AvatarBadge seed={s.name} size={40} fontSize={14} />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 14.5, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {s.name}
+      <div className="card-grid">
+        {skips.map((s) => (
+          <GlassCard key={s.target_id}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 11 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <AvatarBadge seed={s.name} size={40} fontSize={14} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 14.5, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {s.name}
+                  </div>
+                  <div style={{ fontSize: 12, color: "var(--text3)", marginTop: 2 }}>{formatSkipAt(s.at)}</div>
                 </div>
-                <div style={{ fontSize: 12, color: "var(--text3)", marginTop: 2 }}>{formatSkipAt(s.at)}</div>
+                <span
+                  style={{
+                    fontSize: 11.5,
+                    fontWeight: 700,
+                    padding: "5px 10px",
+                    borderRadius: 999,
+                    background: "var(--warn-soft)",
+                    color: "var(--warn)",
+                    whiteSpace: "nowrap",
+                    flexShrink: 0,
+                  }}
+                >
+                  {reasonLabel(s.reason)}
+                </span>
               </div>
-              <span
+              <div
                 style={{
-                  fontSize: 11.5,
-                  fontWeight: 700,
-                  padding: "5px 10px",
-                  borderRadius: 999,
-                  background: "var(--warn-soft)",
-                  color: "var(--warn)",
-                  whiteSpace: "nowrap",
-                  flexShrink: 0,
+                  fontSize: 12.5,
+                  color: "var(--text2)",
+                  background: "var(--field)",
+                  boxShadow: "var(--field-in)",
+                  borderRadius: 13,
+                  padding: "9px 12px",
                 }}
               >
-                {reasonLabel(s.reason)}
-              </span>
+                {s.detail}
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <Button variant="outline" small onClick={() => restore.mutate(s.target_id)} disabled={busyId !== null}>
+                  Restore
+                </Button>
+                <Button variant="danger" small onClick={() => leaveOne(s.target_id)} disabled={busyId !== null}>
+                  {busyId === s.target_id ? "Leaving…" : "Leave group"}
+                </Button>
+              </div>
             </div>
-            <div
-              style={{
-                fontSize: 12.5,
-                color: "var(--text2)",
-                background: "var(--field)",
-                boxShadow: "var(--field-in)",
-                borderRadius: 13,
-                padding: "9px 12px",
-              }}
-            >
-              {s.detail}
-            </div>
-            <div style={{ display: "flex", gap: 8 }}>
-              <Button variant="outline" small onClick={() => restore.mutate(s.target_id)} disabled={busyId !== null}>
-                Restore
-              </Button>
-              <Button variant="danger" small onClick={() => leaveOne(s.target_id)} disabled={busyId !== null}>
-                {busyId === s.target_id ? "Leaving…" : "Leave group"}
-              </Button>
-            </div>
-          </div>
-        </GlassCard>
-      ))}
+          </GlassCard>
+        ))}
+      </div>
 
       {confirmClear ? (
         <GlassCard>
@@ -345,34 +347,36 @@ function DiscordTab({ profileId }: { profileId: number }) {
           </Button>
         </div>
       </GlassCard>
-      {channels.map((c) => (
-        <GlassCard key={c.id}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <span
-              style={{
-                width: 36,
-                height: 36,
-                borderRadius: 12,
-                background: "var(--field)",
-                boxShadow: "var(--field-in)",
-                display: "grid",
-                placeItems: "center",
-                fontSize: 16,
-                fontWeight: 800,
-                color: "var(--text3)",
-                flexShrink: 0,
-              }}
-            >
-              #
-            </span>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 14.5, fontWeight: 700 }}>{c.name}</div>
-              <div style={{ fontSize: 12, color: "var(--text3)", marginTop: 1 }}>{c.guild}</div>
+      <div className="card-grid">
+        {channels.map((c) => (
+          <GlassCard key={c.id}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <span
+                style={{
+                  width: 36,
+                  height: 36,
+                  borderRadius: 12,
+                  background: "var(--field)",
+                  boxShadow: "var(--field-in)",
+                  display: "grid",
+                  placeItems: "center",
+                  fontSize: 16,
+                  fontWeight: 800,
+                  color: "var(--text3)",
+                  flexShrink: 0,
+                }}
+              >
+                #
+              </span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 14.5, fontWeight: 700 }}>{c.name}</div>
+                <div style={{ fontSize: 12, color: "var(--text3)", marginTop: 1 }}>{c.guild}</div>
+              </div>
+              <ToggleSwitch on={selected.has(c.id)} onChange={() => toggle(c.id)} />
             </div>
-            <ToggleSwitch on={selected.has(c.id)} onChange={() => toggle(c.id)} />
-          </div>
-        </GlassCard>
-      ))}
+          </GlassCard>
+        ))}
+      </div>
     </>
   );
 }

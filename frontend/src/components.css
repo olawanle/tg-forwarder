@@ -402,6 +402,19 @@ textarea.field {
 .page--no-nav {
   padding-bottom: 40px;
 }
+/* Mobile-first defaults for .split-grid/.card-grid -- see the 900px+
+   override in the desktop shell block below for what they become once
+   there's room. display: contents makes the wrapper disappear from
+   layout entirely, so its children act as plain flex items of .page,
+   unchanged from the pre-grid markup. */
+.split-grid {
+  display: contents;
+}
+.card-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
 .page-title {
   font-size: 28px;
   font-weight: 800;
@@ -681,6 +694,34 @@ textarea.field {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
     gap: 14px;
+  }
+
+  /* Pages that stay a single flex column on mobile (editor + delivery
+     panel stacked, a tall list of cards) but, past 900px, have enough
+     width to stop wasting it: Compose splits into an editor column + a
+     pinned delivery/actions column, Targets' group and blacklist lists
+     reflow into a multi-column grid. display: contents on mobile makes
+     the wrapper invisible to layout so its children are plain flex items
+     of the surrounding .page -- identical to the pre-grid markup -- then
+     becomes a real grid/flex container once there's room for one. */
+  .page--wide {
+    max-width: 1080px;
+  }
+  .split-grid {
+    display: grid;
+    grid-template-columns: 1.5fr 1fr;
+    gap: 20px;
+    align-items: start;
+  }
+  .split-grid > * {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+  }
+  .card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 10px;
   }
 
   .login-desktop {
