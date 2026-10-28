@@ -35,8 +35,25 @@ def _get_pool(database_url: str) -> pg_pool.ThreadedConnectionPool:
     if database_url not in _POOLS:
         with _POOLS_LOCK:
             if database_url not in _POOLS:
+                # Shared across every FastAPI request AND every concurrently
+                # broadcasting profile's job thread (one thread per profile,
+                # job_runner.py) -- this is the one Postgres pool for the
+                # whole process. 30 was enough during initial rollout; real
+                # usage has since grown to many simultaneous users each
+                # polling /jobs/active every few seconds plus several
+                # concurrent broadcasts, and checked-out connections hung
+                # around for longer than usual whenever a send stalled in
+                # Telethon's retry/backoff (DC-level "Telegram is having
+                # internal issues" spells -- see the retry caps below).
+                # Observed in production as p50 HTTP latency climbing from
+                # ~20-150ms to multiple SECONDS (p99 pegged at the 30s
+                # timeout) starting 2026-10-26, consistent with requests
+                # queuing for a connection rather than the DB itself being
+                # slow (Postgres's own CPU/memory stayed flat the whole
+                # time). Doubled with headroom to spare under Postgres's
+                # default max_connections.
                 _POOLS[database_url] = pg_pool.ThreadedConnectionPool(
-                    1, 30, dsn=database_url
+                    1, 60, dsn=database_url
                 )
     return _POOLS[database_url]
 

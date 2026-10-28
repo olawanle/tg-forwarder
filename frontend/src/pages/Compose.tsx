@@ -221,12 +221,14 @@ export function Compose() {
   const canStart = !!activeProfile.has_session && hasContent && scheduleValid;
 
   return (
-    <div className="page">
+    <div className="page page--wide">
       <div>
         <h1 className="page-title">Compose</h1>
         <div className="page-subtitle">Runs as a background job — you can close the app.</div>
       </div>
 
+      <div className="split-grid">
+      <div>
       {(scheduledJobs.data ?? []).length > 0 && (
         <GlassCard soft>
           <div style={{ fontSize: 12, fontWeight: 800, color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 8 }}>
@@ -371,7 +373,9 @@ export function Compose() {
           </div>
         </>
       )}
+      </div>
 
+      <div>
       <GlassCard>
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <Slider label="Delay between sends" value={delay} min={0} max={60} step={1} suffix="s" onChange={setDelay} />
@@ -422,6 +426,8 @@ export function Compose() {
         >
           {start.isPending ? "Starting…" : scheduleOn ? "Schedule broadcast" : "Broadcast now"}
         </Button>
+      </div>
+      </div>
       </div>
     </div>
   );
