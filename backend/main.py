@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import anyio.to_thread
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from forwarder.auth import bootstrap_admin
 from forwarder.config import get_settings
 from forwarder.job_runner import get_job_runner
-from forwarder.storage import Storage
+from forwarder.storage import API_POOL_MAXCONN, Storage
 
 from backend.config import CORS_ORIGINS
 from backend.routers import admin, auth, compose, profiles, progress, settings, targets
@@ -33,7 +34,17 @@ app.include_router(settings.router)
 
 
 @app.on_event("startup")
-def on_startup() -> None:
+async def on_startup() -> None:
+    # Every route below is a plain `def`, so FastAPI dispatches each call
+    # through Starlette's sync threadpool executor -- which anyio caps at a
+    # hardcoded 40 threads by default, independent of (and lower than) the
+    # API connection pool's own 60. Under load that cap became the real
+    # bottleneck: HTTP requests queued for a thread-pool slot while the DB
+    # pool still had room, producing the same "CPU/DB idle, requests slow"
+    # symptom pool-sizing alone couldn't explain. Match it to the pool size
+    # so the thread pool is never the limiting factor below it.
+    anyio.to_thread.current_default_thread_limiter().total_tokens = API_POOL_MAXCONN
+
     settings = get_settings()
     store = Storage(settings.database_url)
     bootstrap_admin(store, settings)

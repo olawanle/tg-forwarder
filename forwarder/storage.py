@@ -16,10 +16,33 @@ from forwarder.crypto import verify_password
 
 # psycopg2 connections are relatively expensive to open, and Storage() is
 # constructed fresh on every Streamlit rerun and on every job-runner thread.
-# Share one small pool per database_url across all Storage instances instead
-# of opening a pool per instance (which would exhaust Postgres connections).
-_POOLS: dict[str, pg_pool.ThreadedConnectionPool] = {}
+# Share one small pool per (database_url, pool_key) across all Storage
+# instances instead of opening a pool per instance (which would exhaust
+# Postgres connections).
+#
+# Two separate pools, not one shared across everything: job_runner.py's
+# background threads (one per broadcasting profile) and FastAPI's sync HTTP
+# route handlers used to draw from the SAME pool. Whenever Telegram itself
+# was degraded, job threads spent much longer per message retrying
+# (telegram_service.py's retry/backoff) while still polling/writing to
+# Postgres throughout, so more of the pool stayed checked out for longer --
+# starving ordinary page-load/polling requests even though neither the API
+# process's CPU nor Postgres's were anywhere near their limits (requests
+# were queuing for a connection, not doing real work). Doubling the pool
+# size once already (30 -> 60) only bought a few hours before the same
+# pattern returned under normal growth. Giving job threads their own
+# smaller pool means a Telegram-side outage can only ever starve
+# *broadcasts*, never the rest of the app.
+_POOLS: dict[tuple[str, str], pg_pool.ThreadedConnectionPool] = {}
 _POOLS_LOCK = threading.Lock()
+
+# FastAPI sync route handlers run through Starlette's threadpool executor,
+# which anyio caps at a hardcoded 40 threads by default -- lower than even
+# the old 60-connection pool. Any pool size past 40 was already more
+# headroom than the process could use concurrently for HTTP traffic alone;
+# backend/main.py raises that thread-pool cap at startup to match.
+API_POOL_MAXCONN = 60
+JOBS_POOL_MAXCONN = 20
 
 # _init_db()'s DDL (CREATE TABLE/INDEX IF NOT EXISTS, ALTER TABLE ADD COLUMN
 # IF NOT EXISTS) takes a real lock even when it ends up a no-op. Storage() is
@@ -31,31 +54,16 @@ _SCHEMA_READY: set[str] = set()
 _SCHEMA_LOCK = threading.Lock()
 
 
-def _get_pool(database_url: str) -> pg_pool.ThreadedConnectionPool:
-    if database_url not in _POOLS:
+def _get_pool(database_url: str, pool_key: str) -> pg_pool.ThreadedConnectionPool:
+    cache_key = (database_url, pool_key)
+    if cache_key not in _POOLS:
         with _POOLS_LOCK:
-            if database_url not in _POOLS:
-                # Shared across every FastAPI request AND every concurrently
-                # broadcasting profile's job thread (one thread per profile,
-                # job_runner.py) -- this is the one Postgres pool for the
-                # whole process. 30 was enough during initial rollout; real
-                # usage has since grown to many simultaneous users each
-                # polling /jobs/active every few seconds plus several
-                # concurrent broadcasts, and checked-out connections hung
-                # around for longer than usual whenever a send stalled in
-                # Telethon's retry/backoff (DC-level "Telegram is having
-                # internal issues" spells -- see the retry caps below).
-                # Observed in production as p50 HTTP latency climbing from
-                # ~20-150ms to multiple SECONDS (p99 pegged at the 30s
-                # timeout) starting 2026-10-26, consistent with requests
-                # queuing for a connection rather than the DB itself being
-                # slow (Postgres's own CPU/memory stayed flat the whole
-                # time). Doubled with headroom to spare under Postgres's
-                # default max_connections.
-                _POOLS[database_url] = pg_pool.ThreadedConnectionPool(
-                    1, 60, dsn=database_url
+            if cache_key not in _POOLS:
+                maxconn = API_POOL_MAXCONN if pool_key == "api" else JOBS_POOL_MAXCONN
+                _POOLS[cache_key] = pg_pool.ThreadedConnectionPool(
+                    1, maxconn, dsn=database_url
                 )
-    return _POOLS[database_url]
+    return _POOLS[cache_key]
 
 
 def _jsonval(value: Any) -> Any:
@@ -181,10 +189,10 @@ class JobResultRow:
 
 
 class Storage:
-    def __init__(self, database_url: str) -> None:
+    def __init__(self, database_url: str, pool_key: str = "api") -> None:
         if not database_url:
             raise RuntimeError("DATABASE_URL is not set")
-        self._pool = _get_pool(database_url)
+        self._pool = _get_pool(database_url, pool_key)
         if database_url not in _SCHEMA_READY:
             with _SCHEMA_LOCK:
                 if database_url not in _SCHEMA_READY:
