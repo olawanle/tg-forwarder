@@ -129,7 +129,7 @@ class JobRunner:
 
     def _scheduler_loop(self) -> None:
         settings = get_settings()
-        store = Storage(settings.database_url)
+        store = Storage(settings.database_url, pool_key="jobs")
         last_prune = 0.0
         while True:
             try:
@@ -267,7 +267,7 @@ class JobRunner:
         self, job_id: int, profile_id: int, telegram_session: str, stop: threading.Event
     ) -> None:
         settings = get_settings()
-        store = Storage(settings.database_url)
+        store = Storage(settings.database_url, pool_key="jobs")
 
         try:
             profile = store.get_profile(profile_id)

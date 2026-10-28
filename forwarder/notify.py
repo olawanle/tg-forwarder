@@ -27,7 +27,12 @@ def notify_login(user: UserRow, ip: str | None) -> None:
 def _notify_login_thread(user_id: int, ip: str | None) -> None:
     try:
         settings = get_settings()
-        store = Storage(settings.database_url)
+        # Same risk as job_runner.py's broadcast threads: this runs on its
+        # own thread and makes a Telegram call (send_to_self) that can hang
+        # for several seconds during a Telegram-side outage, every time
+        # anyone logs in. Keeping it off the "api" pool means a burst of
+        # logins during an outage can't starve ordinary page-load traffic.
+        store = Storage(settings.database_url, pool_key="jobs")
         profiles = store.list_profiles_for_user(user_id)
         profile = next((p for p in profiles if p.telegram_session), None)
         if not profile:
