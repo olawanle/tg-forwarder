@@ -3,12 +3,11 @@ import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { GlassCard } from "../components/GlassCard";
 import { BottomSheet } from "../components/BottomSheet";
-import { AvatarBadge, ToggleSwitch } from "../components/Small";
+import { AvatarBadge } from "../components/Small";
 import { IconButton } from "../components/Small";
 import { Button } from "../components/Button";
 import { useAuth } from "../auth/AuthContext";
 import { useProfiles } from "../profile/ProfileContext";
-import { useTheme } from "../theme/useTheme";
 import { AddProfileWizard } from "./AddProfileWizard";
 import { api, ApiError } from "../api/client";
 import type { Profile } from "../api/types";
@@ -23,7 +22,6 @@ export function Profiles() {
   const [confirmDelete, setConfirmDelete] = useState<Profile | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [deleteError, setDeleteError] = useState("");
-  const { theme, toggle } = useTheme();
 
   async function removeProfile(p: Profile) {
     setDeleteError("");
@@ -258,13 +256,6 @@ export function Profiles() {
           </div>
         </GlassCard>
       )}
-
-      <GlassCard soft>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <span style={{ fontSize: 13.5, fontWeight: 700 }}>Dark mode</span>
-          <ToggleSwitch on={theme === "dark"} onChange={toggle} />
-        </div>
-      </GlassCard>
 
       <div
         onClick={logout}

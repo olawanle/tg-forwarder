@@ -1,143 +1,61 @@
-/* "Liquid Glass" design tokens — emerald-on-black signature, sophisticated
-   dark-forward chrome. Variable names are kept stable across the redesign
+/* "True Liquid Glass" design tokens -- blue-on-near-black signature over a
+   full-bleed photo background (Forwarder Redesign.dc.html). The design has
+   no light variant, so :root and [data-theme="dark"] are intentionally
+   identical: the existing light/dark toggle keeps working (it just stops
+   changing anything), rather than ripping the toggle control out of every
+   page that renders it. Variable names are kept stable across the redesign
    so component and page files didn't need touching just to pick up new
    colors. */
 
-:root {
-  --bg1: #f2f8f4;
-  --bg2: #e7f1ea;
-  --blob1: rgba(16, 185, 129, 0.16);
-  --blob2: rgba(5, 150, 105, 0.13);
-  --blob3: rgba(132, 204, 22, 0.13);
-  --glass: #ffffff;
-  --glass-2: #e3ede7;
-  --glass-3: rgba(255, 255, 255, 0.72);
-  --stroke: rgba(6, 20, 14, 0.09);
-  --hair: rgba(6, 20, 14, 0.09);
-  --text: #081410;
-  --text2: #3c4a43;
-  --text3: #7c8c84;
-  --shadow: 0 1px 2px rgba(6, 20, 14, 0.06), 0 8px 20px rgba(6, 20, 14, 0.08);
-  --shadow-lg: 0 4px 14px rgba(6, 20, 14, 0.08), 0 28px 60px rgba(6, 20, 14, 0.18);
-  --accent: #059669;
-  --accent2: #34d399;
-  --accent-soft: rgba(5, 150, 105, 0.13);
-  --accent-grad: linear-gradient(135deg, #047857, #34d399);
-  --cyan: #4d7c0f;
-  --cyan-soft: rgba(77, 124, 15, 0.12);
-  --ok: #16a34a;
-  --ok-soft: rgba(22, 163, 74, 0.12);
-  --warn: #c96a00;
-  --warn-soft: rgba(201, 106, 0, 0.13);
-  --bad: #d92d3a;
-  --bad-soft: rgba(217, 45, 58, 0.11);
-  --field: #e3ede7;
-  --field-in: inset 0 0 0 1px rgba(6, 20, 14, 0.09);
+:root,
+:root[data-theme="dark"],
+:root[data-theme="light"] {
+  --bg1: #0a0a0f;
+  --bg2: #050505;
+  --glass: #0f172a;
+  --glass-2: rgba(15, 23, 42, 0.5);
+  --glass-3: rgba(15, 23, 42, 0.4);
+  --stroke: rgba(255, 255, 255, 0.1);
+  --hair: rgba(255, 255, 255, 0.1);
+  --text: #f8fafc;
+  --text2: #cbd5e1;
+  --text3: #94a3b8;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 22px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.45), 0 32px 70px rgba(0, 0, 0, 0.6);
+  --accent: #3b82f6;
+  --accent2: #60a5fa;
+  --accent-soft: rgba(59, 130, 246, 0.16);
+  --accent-grad: linear-gradient(135deg, #3b82f6, #60a5fa);
+  --cyan: #38bdf8;
+  --cyan-soft: rgba(56, 189, 248, 0.14);
+  /* --ok stays emerald on purpose: the design system reserves emerald
+     strictly for success states, everywhere else is blue. */
+  --ok: #10b981;
+  --ok-soft: rgba(16, 185, 129, 0.16);
+  --warn: #f59e0b;
+  --warn-soft: rgba(245, 158, 11, 0.16);
+  --bad: #f87171;
+  --bad-soft: rgba(248, 113, 113, 0.16);
+  --field: rgba(15, 23, 42, 0.5);
+  --field-in: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
   /* Liquid Glass: the rim-light + inner-glow pair that makes a translucent
      surface read as curved glass catching light, not just a blurred PNG.
      --glass-highlight sits along the top edge (inset 0 1px 0), --glass-rim
      traces the full border for the "thick edge" look. */
-  --glass-highlight: rgba(255, 255, 255, 0.65);
-  --glass-rim: inset 0 0 0 1px rgba(255, 255, 255, 0.3);
-  /* "Private workspace" signal -- the same emerald family as --accent, one
-     shade deeper, used for badges/rings so it reads as a distinct accent
-     tier without introducing a second brand color. */
-  --premium: #047857;
-  --premium-soft: rgba(4, 120, 87, 0.12);
-  --premium-grad: linear-gradient(135deg, #047857, #34d399, #047857);
-  --premium-ring: 0 0 0 1px rgba(4, 120, 87, 0.3), 0 10px 30px rgba(5, 150, 105, 0.14);
-  /* Sidebar/nav chrome is deliberately always-black regardless of theme --
-     see .d-sidebar / .d-login-brand -- for a consistent "green on black"
-     identity that doesn't wash out in light mode. */
-  --chrome-bg: radial-gradient(120% 100% at 20% 0%, #0f1a14, #030504 65%);
-  --chrome-text: #eafff3;
-  --chrome-text2: #8fae9e;
-}
-
-:root[data-theme="dark"] {
-  --bg1: #050b07;
-  --bg2: #020403;
-  --blob1: rgba(16, 185, 129, 0.24);
-  --blob2: rgba(5, 150, 105, 0.17);
-  --blob3: rgba(132, 204, 22, 0.15);
-  --glass: #0d1611;
-  --glass-2: #121c16;
-  --glass-3: rgba(13, 22, 17, 0.72);
-  --stroke: rgba(134, 239, 172, 0.1);
-  --hair: rgba(134, 239, 172, 0.1);
-  --text: #eafff3;
-  --text2: #a8c4b4;
-  --text3: #5f7a6b;
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 22px rgba(0, 0, 0, 0.4);
-  --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.45), 0 32px 70px rgba(0, 0, 0, 0.6);
-  --accent: #34d399;
-  --accent2: #86efac;
-  --accent-soft: rgba(52, 211, 153, 0.18);
-  --accent-grad: linear-gradient(135deg, #10b981, #86efac);
-  --cyan: #a3e635;
-  --cyan-soft: rgba(163, 230, 53, 0.14);
-  --ok: #4ade80;
-  --ok-soft: rgba(74, 222, 128, 0.16);
-  --warn: #ffb020;
-  --warn-soft: rgba(255, 176, 32, 0.14);
-  --bad: #ff5b66;
-  --bad-soft: rgba(255, 91, 102, 0.14);
-  --field: #121c16;
-  --field-in: inset 0 0 0 1px rgba(134, 239, 172, 0.1);
-  --glass-highlight: rgba(173, 255, 214, 0.16);
-  --glass-rim: inset 0 0 0 1px rgba(134, 239, 172, 0.1);
-  --premium: #6ee7a8;
-  --premium-soft: rgba(110, 231, 168, 0.16);
-  --premium-grad: linear-gradient(135deg, #10b981, #d9f99d, #10b981);
-  --premium-ring: 0 0 0 1px rgba(110, 231, 168, 0.28), 0 10px 30px rgba(16, 185, 129, 0.16);
-  --chrome-bg: radial-gradient(120% 100% at 20% 0%, #0f1a14, #030504 65%);
-  --chrome-text: #eafff3;
-  --chrome-text2: #8fae9e;
-}
-
-/* Respect system preference until the user picks explicitly (App.tsx sets
-   data-theme once a choice is stored in localStorage). */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]):not([data-theme="dark"]) {
-    --bg1: #050b07;
-    --bg2: #020403;
-    --blob1: rgba(16, 185, 129, 0.24);
-    --blob2: rgba(5, 150, 105, 0.17);
-    --blob3: rgba(132, 204, 22, 0.15);
-    --glass: #0d1611;
-    --glass-2: #121c16;
-    --glass-3: rgba(13, 22, 17, 0.72);
-    --stroke: rgba(134, 239, 172, 0.1);
-    --hair: rgba(134, 239, 172, 0.1);
-    --text: #eafff3;
-    --text2: #a8c4b4;
-    --text3: #5f7a6b;
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 22px rgba(0, 0, 0, 0.4);
-    --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.45), 0 32px 70px rgba(0, 0, 0, 0.6);
-    --accent: #34d399;
-    --accent2: #86efac;
-    --accent-soft: rgba(52, 211, 153, 0.18);
-    --accent-grad: linear-gradient(135deg, #10b981, #86efac);
-    --cyan: #a3e635;
-    --cyan-soft: rgba(163, 230, 53, 0.14);
-    --ok: #4ade80;
-    --ok-soft: rgba(74, 222, 128, 0.16);
-    --warn: #ffb020;
-    --warn-soft: rgba(255, 176, 32, 0.14);
-    --bad: #ff5b66;
-    --bad-soft: rgba(255, 91, 102, 0.14);
-    --field: #121c16;
-    --field-in: inset 0 0 0 1px rgba(134, 239, 172, 0.1);
-    --glass-highlight: rgba(173, 255, 214, 0.16);
-    --glass-rim: inset 0 0 0 1px rgba(134, 239, 172, 0.1);
-    --premium: #6ee7a8;
-    --premium-soft: rgba(110, 231, 168, 0.16);
-    --premium-grad: linear-gradient(135deg, #10b981, #d9f99d, #10b981);
-    --premium-ring: 0 0 0 1px rgba(110, 231, 168, 0.28), 0 10px 30px rgba(16, 185, 129, 0.16);
-    --chrome-bg: radial-gradient(120% 100% at 20% 0%, #0f1a14, #030504 65%);
-    --chrome-text: #eafff3;
-    --chrome-text2: #8fae9e;
-  }
+  --glass-highlight: rgba(255, 255, 255, 0.18);
+  --glass-rim: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+  /* "Private workspace" signal -- one shade lighter than --accent, used for
+     badges/rings so it reads as a distinct accent tier without introducing
+     a second brand color. */
+  --premium: #60a5fa;
+  --premium-soft: rgba(96, 165, 250, 0.16);
+  --premium-grad: linear-gradient(135deg, #3b82f6, #93c5fd, #3b82f6);
+  --premium-ring: 0 0 0 1px rgba(96, 165, 250, 0.3), 0 10px 30px rgba(59, 130, 246, 0.16);
+  /* Sidebar/nav chrome is deliberately always near-black regardless of
+     theme -- see .d-sidebar / .d-login-brand. */
+  --chrome-bg: radial-gradient(120% 100% at 20% 0%, #0b1220, #030308 65%);
+  --chrome-text: #f8fafc;
+  --chrome-text2: #94a3b8;
 }
 
 /* Smoothly interpolatable custom properties -- lets a plain CSS
@@ -241,8 +159,8 @@ body,
 
 body {
   margin: 0;
-  background: #e8f1ea;
-  font-family: "Manrope", -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  background: #050505;
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
   color: var(--text);
 }
 
@@ -270,59 +188,29 @@ button {
   font-family: inherit;
 }
 
-/* App root: the animated background blobs + safe-area-aware full-bleed
-   layout. No fake phone bezel in the real deploy — that was the design
-   tool's preview chrome. */
+/* App root: full-bleed cover-fit photo background, fixed so it doesn't
+   scroll with the page content ("Imagery is the background" -- glass never
+   sits on a flat color or a gradient). No fake phone bezel in the real
+   deploy — that was the design tool's preview chrome. */
 .app-bg {
   min-height: 100vh;
   min-height: 100dvh;
-  background: radial-gradient(120% 90% at 15% 0%, var(--bg2), var(--bg1) 70%);
+  background: #050505 url("/backgrounds/bg1.jpg") center center / cover no-repeat fixed;
   color: var(--text);
   position: relative;
   overflow-x: hidden;
 }
-
-.app-blobs {
+.app-bg::before {
+  content: "";
   position: fixed;
   inset: 0;
-  overflow: hidden;
-  pointer-events: none;
+  background: linear-gradient(180deg, rgba(5, 5, 5, 0.6), rgba(5, 5, 5, 0.8));
   z-index: 0;
+  pointer-events: none;
 }
-.app-blobs > div {
-  position: absolute;
-  border-radius: 50%;
-}
-.app-blobs .b1 {
-  top: -14%;
-  left: -18%;
-  width: 80vw;
-  height: 80vw;
-  max-width: 480px;
-  max-height: 480px;
-  background: var(--blob1);
-  filter: blur(90px);
-  animation: glassFloat 18s ease-in-out infinite;
-}
-.app-blobs .b2 {
-  bottom: -16%;
-  right: -18%;
-  width: 90vw;
-  height: 90vw;
-  max-width: 520px;
-  max-height: 520px;
-  background: var(--blob3);
-  filter: blur(110px);
-  animation: glassFloat 24s ease-in-out infinite reverse;
-}
-.app-blobs .b3 {
-  top: 32%;
-  right: -10%;
-  width: 60vw;
-  height: 60vw;
-  max-width: 340px;
-  max-height: 340px;
-  background: var(--blob2);
-  filter: blur(100px);
-  animation: glassFloat 21s ease-in-out infinite;
+
+/* Superseded by the photo background above -- kept as a no-op so App.tsx
+   doesn't need touching just to drop the markup that renders it. */
+.app-blobs {
+  display: none;
 }

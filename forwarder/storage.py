@@ -79,6 +79,7 @@ class UserRow:
     created_at: str
     default_delay_seconds: float | None = None
     totp_enabled: bool = False
+    totp_exempt: bool = False
     session_id: str | None = None
     last_login_at: str | None = None
     last_login_ip: str | None = None
@@ -400,6 +401,12 @@ class Storage:
             # Profiles page can show which number each profile actually is
             # (it's otherwise invisible once the session string exists).
             cur.execute("ALTER TABLE profiles ADD COLUMN IF NOT EXISTS phone TEXT;")
+            # Admin-granted override: lets a specific user log in without
+            # ever being prompted for 2FA, bypassing the otherwise-mandatory
+            # setup/verification -- see Storage.set_totp_exempt.
+            cur.execute(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_exempt BOOLEAN NOT NULL DEFAULT FALSE;"
+            )
 
     # ---------------------------------------------------------------- users
 
@@ -433,6 +440,7 @@ class Storage:
             created_at=str(row["created_at"]),
             default_delay_seconds=row["default_delay_seconds"],
             totp_enabled=bool(row["totp_enabled"]),
+            totp_exempt=bool(row["totp_exempt"]),
             session_id=row["session_id"],
             last_login_at=str(row["last_login_at"]) if row["last_login_at"] else None,
             last_login_ip=row["last_login_ip"],
@@ -489,6 +497,29 @@ class Storage:
                 (user_id,),
             )
             cur.execute("DELETE FROM totp_backup_codes WHERE user_id = %s", (user_id,))
+
+    def set_totp_exempt(self, user_id: int, exempt: bool) -> None:
+        """Admin override, distinct from disable_totp(): when exempt, this
+        user's login skips 2FA entirely (no setup prompt, no code), where
+        disable_totp alone still forces fresh enrollment on the next login
+        since 2FA is otherwise mandatory. Granting the exemption also wipes
+        any existing secret/backup codes -- "remove authenticator" leaves
+        nothing to verify. Revoking it clears the flag only; the account
+        goes through mandatory setup again next login, same as any other
+        account without a secret."""
+        with self._conn() as conn, conn.cursor() as cur:
+            if exempt:
+                cur.execute(
+                    """
+                    UPDATE users
+                    SET totp_exempt = TRUE, totp_secret_enc = NULL, totp_enabled = FALSE
+                    WHERE id = %s
+                    """,
+                    (user_id,),
+                )
+                cur.execute("DELETE FROM totp_backup_codes WHERE user_id = %s", (user_id,))
+            else:
+                cur.execute("UPDATE users SET totp_exempt = FALSE WHERE id = %s", (user_id,))
 
     def replace_backup_codes(self, user_id: int, code_hashes: list[str]) -> None:
         with self._conn() as conn, conn.cursor() as cur:

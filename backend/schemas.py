@@ -18,16 +18,23 @@ class LoginResponse(BaseModel):
 
 class LoginStepResponse(BaseModel):
     """/auth/login never returns a usable token directly -- 2FA is always
-    required, so it's always one of these two branches instead. The
-    `status` field is what the frontend switches on; fields outside the
-    relevant branch are simply omitted."""
+    required -- except for the "done" status, used only for an account an
+    admin has explicitly exempted from 2FA (backend/routers/admin.py
+    totp-exempt). The `status` field is what the frontend switches on;
+    fields outside the relevant branch are simply omitted."""
 
-    status: str  # "totp_required" | "totp_setup_required"
+    status: str  # "totp_required" | "totp_setup_required" | "done"
     pre_auth_token: str | None = None
     # status == "totp_setup_required" only (first login, or after an admin
     # 2FA reset):
     totp_secret: str | None = None
     totp_qr_data_uri: str | None = None
+    # status == "done" only (totp_exempt accounts skip 2FA entirely):
+    token: str | None = None
+    user_id: int | None = None
+    email: str | None = None
+    role: str | None = None
+    must_change_password: bool | None = None
 
 
 class TotpVerifyRequest(BaseModel):
@@ -243,12 +250,17 @@ class AdminUserOut(BaseModel):
     profile_count: int
     default_delay_seconds: float | None
     totp_enabled: bool
+    totp_exempt: bool
     last_login_at: str | None
     last_login_ip: str | None
 
 
 class AdminSetUserDelayRequest(BaseModel):
     default_delay_seconds: float | None = Field(default=None, ge=0)
+
+
+class AdminSetTotpExemptRequest(BaseModel):
+    exempt: bool
 
 
 class AdminSetActiveRequest(BaseModel):

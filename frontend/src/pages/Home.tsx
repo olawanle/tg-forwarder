@@ -1,6 +1,7 @@
 import { Link, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { GlassCard } from "../components/GlassCard";
+import { GlassHero } from "../components/GlassHero";
 import { AvatarBadge, StatusPill, toneForStatus } from "../components/Small";
 import { MiniProgressRing } from "../components/ProgressRing";
 import { TrendChart } from "../components/TrendChart";
@@ -114,8 +115,8 @@ export function Home() {
         </div>
 
         {job && (
-          <GlassCard onClick={() => navigate("/progress")}>
-            <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+          <GlassHero style={{ cursor: "pointer" }}>
+            <div onClick={() => navigate("/progress")} style={{ display: "flex", alignItems: "center", gap: 16 }}>
               <MiniProgressRing fraction={fraction} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
@@ -137,7 +138,7 @@ export function Home() {
                 <path d="m9 18 6-6-6-6" />
               </svg>
             </div>
-          </GlassCard>
+          </GlassHero>
         )}
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
@@ -245,8 +246,8 @@ export function Home() {
         <div className="d-grid">
           <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
             {job && (
-              <GlassCard onClick={() => navigate("/progress")} style={{ cursor: "pointer" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+              <GlassHero style={{ cursor: "pointer" }}>
+                <div onClick={() => navigate("/progress")} style={{ display: "flex", alignItems: "center", gap: 16 }}>
                   <MiniProgressRing fraction={fraction} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
@@ -261,7 +262,7 @@ export function Home() {
                     </div>
                   </div>
                 </div>
-              </GlassCard>
+              </GlassHero>
             )}
 
             <div className="d-stats-row">

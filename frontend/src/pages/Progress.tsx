@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { GlassCard } from "../components/GlassCard";
+import { GlassHero } from "../components/GlassHero";
 import { Button } from "../components/Button";
 import { PulseRing } from "../components/PulseRing";
 import { AvatarBadge, StatusPill, toneForStatus } from "../components/Small";
@@ -94,7 +95,7 @@ export function Progress() {
           </div>
         </div>
 
-        <GlassCard>
+        <GlassHero>
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
             <PulseRing fraction={fraction} active={isRunning}>
               <b className="mono">{doneDisplay}</b>
@@ -119,7 +120,7 @@ export function Progress() {
               )}
             </div>
           </div>
-        </GlassCard>
+        </GlassHero>
 
         {job.summary && Object.keys(job.summary).length > 0 && (
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
@@ -180,7 +181,7 @@ export function Progress() {
         </div>
 
         <div className="d-grid" style={{ gridTemplateColumns: "0.9fr 1.1fr" }}>
-          <GlassCard style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 18, padding: 32 }}>
+          <GlassHero style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 18, padding: 32 }}>
             <PulseRing fraction={fraction} size={200} thickness={11} active={isRunning}>
               <b className="mono" style={{ fontSize: 32 }}>
                 {Math.round(fraction * 100)}%
@@ -213,7 +214,7 @@ export function Progress() {
                 ))}
               </div>
             )}
-          </GlassCard>
+          </GlassHero>
 
           <GlassCard>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
