@@ -514,9 +514,12 @@ class JobRunner:
                     result.status,
                     result.detail,
                 )
-                job = store.get_job(job_id)
-                done = (job.done if job else 0) + 1
-                total = job.total if job and job.total else done + len(remaining)
+                # `job` is still the copy fetched at the top of this same
+                # iteration (line 438) -- nothing else writes job.done/total
+                # for this job while this loop owns it, so re-fetching here
+                # was a second pool checkout for data already in hand.
+                done = job.done + 1
+                total = job.total if job.total else done + len(remaining)
                 store.update_job(
                     job_id,
                     done=done,
@@ -551,14 +554,7 @@ class JobRunner:
         status: str,
         detail: str,
     ) -> None:
-        store.add_job_result(job_id, platform, target_id, target_name, status, detail)
-        store.add_send_log(profile_id, platform, target_id, target_name, status, detail)
-        if status == "auto_deleted":
-            store.add_telegram_skip(profile_id, target_id, target_name, "auto_deleted", detail)
-        elif status == "skipped_stars":
-            store.add_telegram_skip(profile_id, target_id, target_name, "stars_required", detail)
-        elif status in {"skipped_forbidden", "skipped_banned", "skipped_private"}:
-            store.add_telegram_skip(profile_id, target_id, target_name, status, detail)
+        store.record_send_result(job_id, profile_id, platform, target_id, target_name, status, detail)
 
 
 _RUNNER = JobRunner()
