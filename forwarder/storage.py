@@ -42,7 +42,21 @@ _POOLS_LOCK = threading.Lock()
 # headroom than the process could use concurrently for HTTP traffic alone;
 # backend/main.py raises that thread-pool cap at startup to match.
 API_POOL_MAXCONN = 60
-JOBS_POOL_MAXCONN = 20
+# 20 turned out to be a guess, not a measurement, and it was wrong: real
+# production load regularly runs far more than 20 profiles broadcasting at
+# once, each target sent needing several short connection checkouts
+# (job_runner.py's _record/update_job calls), so the "jobs" pool itself
+# started throwing psycopg2.pool.PoolError: connection pool exhausted --
+# broadcasts failing outright (not just queuing slowly) with "Scheduler
+# tick failed" / "Job N failed" in the logs. Confirmed safe to raise:
+# Postgres's own CPU/memory stayed near-idle the entire time (no "too many
+# clients" on the Postgres side, ever, even back when the whole app shared
+# one 60-connection pool) -- the ceiling here was purely this number, not
+# anything Postgres or the API process couldn't handle. Paired with
+# record_send_result() collapsing 2-4 of those per-target checkouts into
+# one, so this is real headroom over actual demand, not another blind
+# doubling.
+JOBS_POOL_MAXCONN = 60
 
 # _init_db()'s DDL (CREATE TABLE/INDEX IF NOT EXISTS, ALTER TABLE ADD COLUMN
 # IF NOT EXISTS) takes a real lock even when it ends up a no-op. Storage() is
@@ -932,21 +946,6 @@ class Storage:
             for row in rows
         }
 
-    def add_telegram_skip(
-        self, profile_id: int, target_id: str, name: str, reason: str, detail: str = ""
-    ) -> None:
-        with self._conn() as conn, conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO telegram_skips(profile_id, target_id, name, reason, detail, at)
-                VALUES (%s, %s, %s, %s, %s, now())
-                ON CONFLICT (profile_id, target_id)
-                DO UPDATE SET name = excluded.name, reason = excluded.reason,
-                              detail = excluded.detail, at = excluded.at
-                """,
-                (profile_id, str(target_id), name, reason, detail),
-            )
-
     def remove_telegram_skip(self, profile_id: int, target_id: str) -> None:
         with self._conn() as conn, conn.cursor() as cur:
             cur.execute(
@@ -989,24 +988,6 @@ class Storage:
                 )
 
     # ------------------------------------------------------------- send log
-
-    def add_send_log(
-        self,
-        profile_id: int,
-        platform: str,
-        target_id: str,
-        target_name: str,
-        status: str,
-        detail: str = "",
-    ) -> None:
-        with self._conn() as conn, conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO send_log(profile_id, platform, target_id, target_name, status, detail)
-                VALUES (%s, %s, %s, %s, %s, %s)
-                """,
-                (profile_id, platform, target_id, target_name, status, detail),
-            )
 
     def list_send_logs(self, profile_id: int, limit: int = 100) -> list[SendLogRow]:
         with self._conn() as conn, conn.cursor() as cur:
@@ -1309,25 +1290,6 @@ class Storage:
                 vals,
             )
 
-    def add_job_result(
-        self,
-        job_id: int,
-        platform: str,
-        target_id: str,
-        target_name: str,
-        status: str,
-        detail: str = "",
-    ) -> None:
-        with self._conn() as conn, conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO job_results(
-                    job_id, platform, target_id, target_name, status, detail
-                ) VALUES (%s, %s, %s, %s, %s, %s)
-                """,
-                (job_id, platform, target_id, target_name, status, detail),
-            )
-
     def list_job_results(self, job_id: int, limit: int = 20000) -> list[JobResultRow]:
         with self._conn() as conn, conn.cursor() as cur:
             cur.execute(
@@ -1354,6 +1316,61 @@ class Storage:
             )
             for r in rows
         ]
+
+    def record_send_result(
+        self,
+        job_id: int,
+        profile_id: int,
+        platform: str,
+        target_id: str,
+        target_name: str,
+        status: str,
+        detail: str = "",
+    ) -> None:
+        """job_runner.py's _record(): one target sent used to mean 2-4
+        separate pool checkouts (add_job_result, add_send_log, sometimes
+        add_telegram_skip), each its own round trip and its own brief
+        connection hold -- multiplied across every target in every
+        concurrently-broadcasting profile, this was the dominant source of
+        "jobs" pool demand (see the pool_key split in forwarder/storage.py's
+        module docstring), not the DB actually being slow. One connection,
+        one transaction, same end state."""
+        skip_reason = (
+            "auto_deleted"
+            if status == "auto_deleted"
+            else "stars_required"
+            if status == "skipped_stars"
+            else status
+            if status in {"skipped_forbidden", "skipped_banned", "skipped_private"}
+            else None
+        )
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO job_results(
+                    job_id, platform, target_id, target_name, status, detail
+                ) VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (job_id, platform, target_id, target_name, status, detail),
+            )
+            cur.execute(
+                """
+                INSERT INTO send_log(profile_id, platform, target_id, target_name, status, detail)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (profile_id, platform, target_id, target_name, status, detail),
+            )
+            if skip_reason:
+                cur.execute(
+                    """
+                    INSERT INTO telegram_skips(profile_id, target_id, name, reason, detail, at)
+                    VALUES (%s, %s, %s, %s, %s, now())
+                    ON CONFLICT (profile_id, target_id)
+                    DO UPDATE SET name = excluded.name, reason = excluded.reason,
+                                  detail = excluded.detail, at = excluded.at
+                    """,
+                    (profile_id, str(target_id), target_name, skip_reason, detail),
+                )
 
     def mark_orphaned_jobs_interrupted(self) -> list[int]:
         """Mark queued/running jobs as interrupted after process restart."""
