@@ -391,7 +391,7 @@ export function Admin() {
                     onClick={() => {
                       if (
                         window.confirm(
-                          `Remove the authenticator requirement for ${u.email}? They'll be able to log in with just their password — no 2FA at all — until you require it again.`,
+                          `Remove the authenticator requirement for ${u.email}? They'll be able to log in with just their password — no 2FA at all — and stay logged in on multiple devices at once (normally a new login signs out every other device), until you require it again.`,
                         )
                       ) {
                         setTotpExempt.mutate({ id: u.id, exempt: true });
