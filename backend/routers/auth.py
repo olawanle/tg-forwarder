@@ -54,7 +54,12 @@ def _decode_pre_auth_or_401(token: str) -> int:
 def _finish_login(
     store: Storage, user: UserRow, ip: str | None
 ) -> schemas.TotpSetupConfirmResponse:
-    session_id = store.rotate_session(user.id, login_ip=ip)
+    # A 2FA-exempt user keeps every device's session alive across logins
+    # (backend/deps.py skips the single-session check for them to match) --
+    # see rotate_session's docstring for why.
+    session_id = store.rotate_session(
+        user.id, login_ip=ip, enforce_single_session=not user.totp_exempt
+    )
     notify_login(user, ip)
     return schemas.TotpSetupConfirmResponse(
         token=create_token(user.id, session_id),

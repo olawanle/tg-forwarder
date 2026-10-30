@@ -580,21 +580,38 @@ class Storage:
                     return True
         return False
 
-    def rotate_session(self, user_id: int, login_ip: str | None = None) -> str:
-        """Generates and stores a new session id, superseding whatever
+    def rotate_session(
+        self, user_id: int, login_ip: str | None = None, enforce_single_session: bool = True
+    ) -> str:
+        """Generates a session id for the new token. When
+        enforce_single_session is True (the default, every non-exempt user),
+        it's also written to users.session_id, superseding whatever
         token/session was previously valid for this user -- this is the
         single-active-session enforcement: logging in anywhere invalidates
-        every other device's token the moment this runs."""
+        every other device's token the moment this runs.
+
+        A 2FA-exempt user explicitly trades that away for multi-device
+        persistence (backend/deps.py skips the session_id match for them
+        entirely, so this returned id is never checked against anything) --
+        only last_login_at/ip get recorded, users.session_id is left alone
+        so an earlier device's token keeps working instead of being kicked
+        the moment a second device logs in."""
         session_id = secrets.token_urlsafe(32)
         with self._conn() as conn, conn.cursor() as cur:
-            cur.execute(
-                """
-                UPDATE users
-                SET session_id = %s, last_login_at = now(), last_login_ip = %s
-                WHERE id = %s
-                """,
-                (session_id, login_ip, user_id),
-            )
+            if enforce_single_session:
+                cur.execute(
+                    """
+                    UPDATE users
+                    SET session_id = %s, last_login_at = now(), last_login_ip = %s
+                    WHERE id = %s
+                    """,
+                    (session_id, login_ip, user_id),
+                )
+            else:
+                cur.execute(
+                    "UPDATE users SET last_login_at = now(), last_login_ip = %s WHERE id = %s",
+                    (login_ip, user_id),
+                )
         return session_id
 
     def clear_session(self, user_id: int) -> None:

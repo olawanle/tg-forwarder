@@ -35,8 +35,11 @@ def get_current_user(
     # Single-active-session enforcement: a newer login (this device or any
     # other) rotates users.session_id, which immediately invalidates every
     # token minted before that rotation -- independent of this token's own
-    # (long) expiry.
-    if not user.session_id or user.session_id != session_id:
+    # (long) expiry. A 2FA-exempt user explicitly opts out of this (admin's
+    # call, see Storage.rotate_session) so their sessions persist across
+    # multiple devices instead of each new login kicking the others; the
+    # token's own signature and expiry are still what's checked for them.
+    if not user.totp_exempt and (not user.session_id or user.session_id != session_id):
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED,
             "Signed out — this account logged in elsewhere or was signed out.",
