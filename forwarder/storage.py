@@ -1307,18 +1307,46 @@ class Storage:
                 vals,
             )
 
-    def list_job_results(self, job_id: int, limit: int = 20000) -> list[JobResultRow]:
+    def list_job_results(
+        self, job_id: int, limit: int = 20000, newest_first: bool = False
+    ) -> list[JobResultRow]:
+        """newest_first=True is for the live Progress feed, which only ever
+        displays the most recent `limit` rows (see backend/routers/progress.py)
+        -- without it, a long-running job's every-2-second poll was fetching
+        and serializing its ENTIRE result history (up to the 20000-row
+        default), getting slower every target sent for as long as anyone
+        kept that job's Progress tab open, which is exactly the kind of
+        steadily-building slowness users were reporting. The other two
+        callers (job_runner.py's end-of-job summary, the Streamlit app's
+        full results table) still want every row, so the default stays
+        unbounded -- only the hot polling path opts into this."""
         with self._conn() as conn, conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT id, job_id, created_at, platform, target_id, target_name, status, detail
-                FROM job_results
-                WHERE job_id = %s
-                ORDER BY id ASC
-                LIMIT %s
-                """,
-                (job_id, limit),
-            )
+            if newest_first:
+                cur.execute(
+                    """
+                    SELECT id, job_id, created_at, platform, target_id, target_name, status, detail
+                    FROM (
+                        SELECT id, job_id, created_at, platform, target_id, target_name, status, detail
+                        FROM job_results
+                        WHERE job_id = %s
+                        ORDER BY id DESC
+                        LIMIT %s
+                    ) recent
+                    ORDER BY id ASC
+                    """,
+                    (job_id, limit),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT id, job_id, created_at, platform, target_id, target_name, status, detail
+                    FROM job_results
+                    WHERE job_id = %s
+                    ORDER BY id ASC
+                    LIMIT %s
+                    """,
+                    (job_id, limit),
+                )
             rows = cur.fetchall()
         return [
             JobResultRow(

@@ -36,7 +36,11 @@ def job_results(
     job = store.get_job(job_id)
     if not job or job.profile_id != profile.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Job not found")
-    return [job_result_out(r) for r in store.list_job_results(job_id)]
+    # Polled every 2s while a job is active (Progress.tsx), and the UI only
+    # ever shows the last 200 anyway (slice(-200)) -- fetching the full
+    # history on every poll made each one slower than the last as a long
+    # job accumulated results. 200 matches what's actually displayed.
+    return [job_result_out(r) for r in store.list_job_results(job_id, limit=200, newest_first=True)]
 
 
 @router.get("/send-log", response_model=list[schemas.SendLogOut])
