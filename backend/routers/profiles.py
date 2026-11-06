@@ -4,6 +4,7 @@ import secrets
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.concurrency import run_in_threadpool
 
 from forwarder.config import get_settings
 from forwarder.storage import ProfileRow, Storage, UserRow
@@ -86,7 +87,11 @@ async def phone_send_code(
     reconnect_profile_id: int | None = None
     if body.profile_id is not None:
         store = Storage(settings.database_url)
-        existing = store.get_profile(body.profile_id)
+        # Blocking call made directly in this `async def` handler's body --
+        # offload it so it doesn't stall the shared event loop (and every
+        # other in-flight request) for its duration; see the matching note
+        # in targets.py's groups().
+        existing = await run_in_threadpool(store.get_profile, body.profile_id)
         if not existing or existing.user_id != user.id:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Profile not found")
         reconnect_profile_id = body.profile_id
@@ -130,11 +135,13 @@ async def phone_verify_code(
         return schemas.PhoneVerifyCodeResponse(needs_password=True)
     reconnect_id = state.get("reconnect_profile_id")
     if reconnect_id is not None:
-        store.update_profile_session(reconnect_id, session)
-        store.update_profile_phone(reconnect_id, state["phone"])
+        await run_in_threadpool(store.update_profile_session, reconnect_id, session)
+        await run_in_threadpool(store.update_profile_phone, reconnect_id, state["phone"])
         profile_id = reconnect_id
     else:
-        profile_id = store.create_profile(user.id, state["label"], session, phone=state["phone"])
+        profile_id = await run_in_threadpool(
+            store.create_profile, user.id, state["label"], session, phone=state["phone"]
+        )
     WIZARD_STORE.pop(body.wizard_token, None)
     return schemas.PhoneVerifyCodeResponse(needs_password=False, profile_id=profile_id)
 
@@ -156,10 +163,12 @@ async def phone_verify_password(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Incorrect password: {exc}"[:300])
     reconnect_id = state.get("reconnect_profile_id")
     if reconnect_id is not None:
-        store.update_profile_session(reconnect_id, session)
-        store.update_profile_phone(reconnect_id, state["phone"])
+        await run_in_threadpool(store.update_profile_session, reconnect_id, session)
+        await run_in_threadpool(store.update_profile_phone, reconnect_id, state["phone"])
         profile_id = reconnect_id
     else:
-        profile_id = store.create_profile(user.id, state["label"], session, phone=state["phone"])
+        profile_id = await run_in_threadpool(
+            store.create_profile, user.id, state["label"], session, phone=state["phone"]
+        )
     WIZARD_STORE.pop(body.wizard_token, None)
     return schemas.PhoneVerifyPasswordResponse(profile_id=profile_id)
