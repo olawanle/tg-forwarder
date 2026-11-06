@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.concurrency import run_in_threadpool
 
 from forwarder.config import get_settings
 from forwarder.discord_service import DiscordService
@@ -24,7 +25,13 @@ async def groups(
     profile: ProfileRow = Depends(get_owned_profile), store: Storage = Depends(get_store)
 ):
     ensure_profile_not_broadcasting(profile)
-    skips = store.get_telegram_skips(profile.id)
+    # This function is `async def` (it awaits the Telegram call below), so a
+    # plain blocking call here -- unlike the same call in a sync `def` route,
+    # which FastAPI offloads to the thread pool automatically -- would run
+    # directly on the single shared event loop and stall every other
+    # request on the process (including unrelated ones, e.g. CORS preflight)
+    # for as long as it takes.
+    skips = await run_in_threadpool(store.get_telegram_skips, profile.id)
     try:
         targets = await build_telegram_service(profile).list_groups(skip_ids=set(skips.keys()))
     except Exception as exc:
@@ -71,7 +78,7 @@ async def leave_groups(
     store: Storage = Depends(get_store),
 ):
     ensure_profile_not_broadcasting(profile)
-    skips = store.get_telegram_skips(profile.id)
+    skips = await run_in_threadpool(store.get_telegram_skips, profile.id)
     ids = body.target_ids if body.target_ids else list(skips.keys())
     targets = [{"id": tid, "name": skips.get(tid, {}).get("name", tid)} for tid in ids]
     if not targets:
@@ -81,7 +88,7 @@ async def leave_groups(
     failed: list[dict] = []
     for r in results:
         if r.status == "left":
-            store.remove_telegram_skip(profile.id, r.target_id)
+            await run_in_threadpool(store.remove_telegram_skip, profile.id, r.target_id)
             left.append({"target_id": r.target_id, "name": r.target_name})
         else:
             failed.append({"target_id": r.target_id, "name": r.target_name, "detail": r.detail})
