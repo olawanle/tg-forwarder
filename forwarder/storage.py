@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import secrets
 import threading
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Iterator
@@ -33,30 +34,148 @@ from forwarder.crypto import verify_password
 # pattern returned under normal growth. Giving job threads their own
 # smaller pool means a Telegram-side outage can only ever starve
 # *broadcasts*, never the rest of the app.
-_POOLS: dict[tuple[str, str], pg_pool.ThreadedConnectionPool] = {}
+_POOLS: dict[tuple[str, str], "_ConnectionPool"] = {}
 _POOLS_LOCK = threading.Lock()
 
-# FastAPI sync route handlers run through Starlette's threadpool executor,
-# which anyio caps at a hardcoded 40 threads by default -- lower than even
-# the old 60-connection pool. Any pool size past 40 was already more
-# headroom than the process could use concurrently for HTTP traffic alone;
-# backend/main.py raises that thread-pool cap at startup to match.
-API_POOL_MAXCONN = 60
-# 20 turned out to be a guess, not a measurement, and it was wrong: real
-# production load regularly runs far more than 20 profiles broadcasting at
-# once, each target sent needing several short connection checkouts
-# (job_runner.py's _record/update_job calls), so the "jobs" pool itself
-# started throwing psycopg2.pool.PoolError: connection pool exhausted --
-# broadcasts failing outright (not just queuing slowly) with "Scheduler
-# tick failed" / "Job N failed" in the logs. Confirmed safe to raise:
-# Postgres's own CPU/memory stayed near-idle the entire time (no "too many
-# clients" on the Postgres side, ever, even back when the whole app shared
-# one 60-connection pool) -- the ceiling here was purely this number, not
-# anything Postgres or the API process couldn't handle. Paired with
-# record_send_result() collapsing 2-4 of those per-target checkouts into
-# one, so this is real headroom over actual demand, not another blind
-# doubling.
-JOBS_POOL_MAXCONN = 60
+# The two pools together must stay under Postgres's max_connections (100 by
+# default). A checkout is held for one short query, so 40 covers far more
+# concurrency than either side generates; a caller that does find the pool
+# busy waits for a connection instead of failing.
+API_POOL_MAXCONN = 40
+JOBS_POOL_MAXCONN = 40
+
+POOL_ACQUIRE_TIMEOUT = 30.0
+# An idle connection can die without us noticing (Postgres restart, the
+# network dropping an idle flow). Ping before reusing one that has sat this
+# long, and close ones that have sat much longer so quiet hours don't hold
+# server backends open for nothing.
+POOL_VALIDATE_AFTER_SECONDS = 15.0
+POOL_MAX_IDLE_SECONDS = 300.0
+
+
+class _ConnectionPool:
+    """Keeps connections open between queries.
+
+    psycopg2's ThreadedConnectionPool(1, n) -- what this replaced -- closes
+    every returned connection beyond `minconn`, so with any concurrency
+    nearly every query opened a fresh connection (DNS lookup, TCP, SCRAM
+    auth, backend fork), and it did so while holding the pool-wide lock:
+    one slow connect stalled every other thread. Measured in production:
+    251 new Postgres connections in 78 seconds.
+    """
+
+    def __init__(self, dsn: str, max_size: int) -> None:
+        self._dsn = dsn
+        self._slots = threading.BoundedSemaphore(max_size)
+        self._lock = threading.Lock()
+        self._idle: list[tuple[psycopg2.extensions.connection, float]] = []
+        self.opened_total = 0
+        self.in_use = 0
+
+    def _connect(self) -> psycopg2.extensions.connection:
+        # Long-lived connections need their own failure detection: keepalives
+        # catch a peer that vanished while idle, tcp_user_timeout one that
+        # vanishes mid-query (otherwise a thread hangs for TCP's ~15 minutes).
+        conn = psycopg2.connect(
+            self._dsn,
+            connect_timeout=10,
+            keepalives=1,
+            keepalives_idle=30,
+            keepalives_interval=10,
+            keepalives_count=3,
+            tcp_user_timeout=15000,
+        )
+        with self._lock:
+            self.opened_total += 1
+        return conn
+
+    @staticmethod
+    def _close(conn: psycopg2.extensions.connection) -> None:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    @staticmethod
+    def _alive(conn: psycopg2.extensions.connection) -> bool:
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+            conn.rollback()
+            return True
+        except Exception:
+            return False
+
+    def getconn(self) -> psycopg2.extensions.connection:
+        if not self._slots.acquire(timeout=POOL_ACQUIRE_TIMEOUT):
+            raise pg_pool.PoolError(
+                f"no database connection became free within {POOL_ACQUIRE_TIMEOUT:.0f}s"
+            )
+        try:
+            conn = None
+            while conn is None:
+                with self._lock:
+                    entry = self._idle.pop() if self._idle else None
+                if entry is None:
+                    conn = self._connect()  # outside the lock: never blocks other threads
+                    break
+                candidate, returned_at = entry
+                idle_for = time.monotonic() - returned_at
+                if candidate.closed or idle_for > POOL_MAX_IDLE_SECONDS:
+                    self._close(candidate)
+                elif idle_for > POOL_VALIDATE_AFTER_SECONDS and not self._alive(candidate):
+                    self._close(candidate)
+                else:
+                    conn = candidate
+        except BaseException:
+            self._slots.release()
+            raise
+        with self._lock:
+            self.in_use += 1
+        return conn
+
+    @staticmethod
+    def _reusable(conn: psycopg2.extensions.connection) -> bool:
+        try:
+            if conn.closed:
+                return False
+            status = conn.info.transaction_status
+            if status == psycopg2.extensions.TRANSACTION_STATUS_UNKNOWN:
+                return False
+            if status != psycopg2.extensions.TRANSACTION_STATUS_IDLE:
+                conn.rollback()
+            return True
+        except Exception:
+            return False
+
+    def putconn(self, conn: psycopg2.extensions.connection) -> None:
+        try:
+            reusable = self._reusable(conn)
+            expired: list[psycopg2.extensions.connection] = []
+            now = time.monotonic()
+            with self._lock:
+                self.in_use -= 1
+                if reusable:
+                    self._idle.append((conn, now))
+                # Newest connections are reused first, so the oldest idle
+                # ones sit at the front.
+                while self._idle and now - self._idle[0][1] > POOL_MAX_IDLE_SECONDS:
+                    expired.append(self._idle.pop(0)[0])
+            if not reusable:
+                self._close(conn)
+            for old in expired:
+                self._close(old)
+        finally:
+            self._slots.release()
+
+    def stats(self) -> dict[str, int]:
+        with self._lock:
+            return {"in_use": self.in_use, "idle": len(self._idle), "opened_total": self.opened_total}
+
+
+def pool_stats() -> dict[str, dict[str, int]]:
+    return {key[1]: pool.stats() for key, pool in list(_POOLS.items())}
+
 
 # _init_db()'s DDL (CREATE TABLE/INDEX IF NOT EXISTS, ALTER TABLE ADD COLUMN
 # IF NOT EXISTS) takes a real lock even when it ends up a no-op. Storage() is
@@ -68,16 +187,30 @@ _SCHEMA_READY: set[str] = set()
 _SCHEMA_LOCK = threading.Lock()
 
 
-def _get_pool(database_url: str, pool_key: str) -> pg_pool.ThreadedConnectionPool:
+def _get_pool(database_url: str, pool_key: str) -> _ConnectionPool:
     cache_key = (database_url, pool_key)
     if cache_key not in _POOLS:
         with _POOLS_LOCK:
             if cache_key not in _POOLS:
                 maxconn = API_POOL_MAXCONN if pool_key == "api" else JOBS_POOL_MAXCONN
-                _POOLS[cache_key] = pg_pool.ThreadedConnectionPool(
-                    1, maxconn, dsn=database_url
-                )
+                _POOLS[cache_key] = _ConnectionPool(database_url, maxconn)
     return _POOLS[cache_key]
+
+
+# A job row's pending_json is the full list of targets still to send -- hundreds
+# of KB on a large account. The UI polls job status every couple of seconds and
+# never shows that list, so those reads leave it out (4 ms -> 0.3 ms per poll
+# measured at 3000 targets) instead of fetching and parsing it each time.
+_JOB_COLUMNS_WITHOUT_PENDING = (
+    "id, profile_id, created_at, updated_at, status, message, source_message_id, "
+    "delay_seconds, max_slowmode_wait, include_discord, total, done, current_name, "
+    "current_detail, error, '[]'::jsonb AS pending_json, summary_json, messages_json, "
+    "source_message_ids_json, scheduled_at"
+)
+
+
+def _job_columns(include_pending: bool) -> str:
+    return "*" if include_pending else _JOB_COLUMNS_WITHOUT_PENDING
 
 
 def _jsonval(value: Any) -> Any:
@@ -221,7 +354,10 @@ class Storage:
             yield conn
             conn.commit()
         except Exception:
-            conn.rollback()
+            try:
+                conn.rollback()
+            except Exception:
+                pass  # connection already dead; putconn discards it
             raise
         finally:
             self._pool.putconn(conn)
@@ -1128,9 +1264,11 @@ class Storage:
             )
             return int(cur.fetchone()["id"])
 
-    def get_job(self, job_id: int) -> JobRow | None:
+    def get_job(self, job_id: int, include_pending: bool = True) -> JobRow | None:
         with self._conn() as conn, conn.cursor() as cur:
-            cur.execute("SELECT * FROM jobs WHERE id = %s", (job_id,))
+            cur.execute(
+                f"SELECT {_job_columns(include_pending)} FROM jobs WHERE id = %s", (job_id,)
+            )
             row = cur.fetchone()
         return self._job_from_row(row) if row else None
 
@@ -1175,11 +1313,11 @@ class Storage:
             )
         return out
 
-    def get_active_job(self, profile_id: int) -> JobRow | None:
+    def get_active_job(self, profile_id: int, include_pending: bool = True) -> JobRow | None:
         with self._conn() as conn, conn.cursor() as cur:
             cur.execute(
-                """
-                SELECT * FROM jobs
+                f"""
+                SELECT {_job_columns(include_pending)} FROM jobs
                 WHERE profile_id = %s AND status IN ('queued', 'running')
                 ORDER BY id DESC
                 LIMIT 1
@@ -1206,10 +1344,13 @@ class Storage:
             rows = cur.fetchall()
         return [self._job_from_row(r) for r in rows]
 
-    def get_latest_job(self, profile_id: int) -> JobRow | None:
+    def get_latest_job(self, profile_id: int, include_pending: bool = True) -> JobRow | None:
         with self._conn() as conn, conn.cursor() as cur:
             cur.execute(
-                "SELECT * FROM jobs WHERE profile_id = %s ORDER BY id DESC LIMIT 1",
+                f"""
+                SELECT {_job_columns(include_pending)} FROM jobs
+                WHERE profile_id = %s ORDER BY id DESC LIMIT 1
+                """,
                 (profile_id,),
             )
             row = cur.fetchone()

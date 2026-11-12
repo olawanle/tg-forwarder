@@ -4,7 +4,7 @@ import asyncio
 import re
 from dataclasses import dataclass
 
-from telethon import TelegramClient
+from telethon import TelegramClient, utils
 from telethon.errors import (
     ChannelPrivateError,
     ChatWriteForbiddenError,
@@ -15,7 +15,60 @@ from telethon.errors import (
     UserBannedInChannelError,
 )
 from telethon.sessions import StringSession
-from telethon.tl.types import Channel, Chat, MessageEmpty, ReactionEmoji
+from telethon.tl.types import (
+    Channel,
+    Chat,
+    InputPeerChannel,
+    InputPeerChat,
+    MessageEmpty,
+    PeerChannel,
+    PeerChat,
+    ReactionEmoji,
+)
+
+
+_TELETHON_INTERNALS_MOVED = (
+    "This Telethon version no longer matches what _SendOnlyClient overrides, so its "
+    "update loop would run again. Re-verify _SendOnlyClient before upgrading Telethon."
+)
+
+
+class _DiscardQueue(asyncio.Queue):
+    def put_nowait(self, item) -> None:
+        pass
+
+
+class _SendOnlyClient(TelegramClient):
+    """TelegramClient with its update machinery actually switched off.
+
+    receive_updates=False does not do that: connect() still starts the
+    update loop, and every send's own result registers that group for
+    catch-up, so 15 minutes later the loop starts downloading everything
+    posted in every group the account has sent to, for as long as the
+    client stays connected. Nothing in this app reads updates. Measured in
+    production with 17 broadcasts running: ~25 MB/min inbound from Telegram
+    against ~0.4 MB/min outbound, one CPU core pinned parsing it, 12 GB RSS,
+    and every HTTP request starved of the GIL behind it.
+
+    Relies on Telethon private names, hence the exact version pin in
+    requirements and the checks that fail at boot if they ever move.
+    """
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        if getattr(self._sender, "_updates_queue", None) is not self._updates_queue:
+            raise RuntimeError(_TELETHON_INTERNALS_MOVED)
+        self._updates_queue = _DiscardQueue()
+        self._sender._updates_queue = self._updates_queue
+
+    async def _update_loop(self) -> None:
+        return
+
+
+# Fail the deploy at boot rather than quietly regress at the first broadcast.
+if not asyncio.iscoroutinefunction(getattr(TelegramClient, "_update_loop", None)):
+    raise RuntimeError(_TELETHON_INTERNALS_MOVED)
+_SendOnlyClient(StringSession(), 1, "0")
 
 
 @dataclass
@@ -25,6 +78,7 @@ class TelegramTarget:
     kind: str
     slowmode_seconds: int = 0
     stars_required: int = 0
+    access_hash: int | None = None
 
 
 @dataclass
@@ -77,6 +131,19 @@ _DELETED_HINT = re.compile(
 )
 
 
+def _known_input_peer(marked_id: int, access_hash: int | None):
+    """Exactly the peer Telethon builds after looking a group up, minus the
+    lookup. Listing the account's groups already returned each one's access
+    hash; without it every target costs two extra round trips to Telegram
+    (resolve the id, then fetch the entity) before its message is even sent."""
+    peer_id, kind = utils.resolve_id(marked_id)
+    if kind is PeerChat:
+        return InputPeerChat(peer_id)
+    if kind is PeerChannel and access_hash:
+        return InputPeerChannel(peer_id, access_hash)
+    return None
+
+
 class TelegramService:
     def __init__(self, api_id: int | None, api_hash: str, session: str = "") -> None:
         self.api_id = api_id
@@ -94,13 +161,8 @@ class TelegramService:
             raise RuntimeError("TELEGRAM_API_ID and TELEGRAM_API_HASH are required")
         # We never register live event handlers -- every call here is a plain
         # RPC (connect, send, list dialogs, disconnect). receive_updates=False
-        # stops Telethon's background update loop from running at all, which
-        # otherwise tries to parse every real-time update Telegram pushes to
-        # the account (new messages, reactions, etc.) even though nothing
-        # reads them. That loop hitting a TL constructor it doesn't recognize
-        # (telethon.errors.common.TypeNotFoundError) desyncs the connection's
-        # read position, which cascades into "wrong session ID" errors and a
-        # tight reconnect loop -- observed driving the service to OOM.
+        # only stops Telegram pushing updates to this connection; the update
+        # loop itself is disabled by _SendOnlyClient.
         # connection_retries/request_retries default to 5 each with a 1s
         # retry_delay, but that budget is per attempt -- as long as
         # auto_reconnect is on and this client stays connected, a prolonged
@@ -112,7 +174,7 @@ class TelegramService:
         # hour instead of backing off, burning enough CPU to help exhaust the
         # DB pool for unrelated requests too. Capping the retries and adding
         # a real delay between cycles bounds the damage from the next one.
-        return TelegramClient(
+        return _SendOnlyClient(
             StringSession(self.session or ""),
             self.api_id,
             self.api_hash,
@@ -248,6 +310,7 @@ class TelegramService:
                         name=dialog.name or tid,
                         kind="supergroup",
                         stars_required=stars,
+                        access_hash=entity.access_hash,
                     )
                 )
         targets.sort(key=lambda t: t.name.lower())
@@ -311,21 +374,28 @@ class TelegramService:
         max_slowmode_wait: int,
         verify_seconds: float = 1.5,
         source_message_id: int | None = None,
+        access_hash: int | None = None,
     ) -> SendResult:
         peer = int(target_id)
-        try:
-            entity = await asyncio.wait_for(client.get_entity(peer), timeout=30)
-        except Exception as exc:
-            return SendResult(target_id, name, "skipped", f"cannot resolve peer: {exc}"[:280])
+        entity = _known_input_peer(peer, access_hash)
+        if entity is None:
+            try:
+                entity = await asyncio.wait_for(client.get_entity(peer), timeout=30)
+            except Exception as exc:
+                return SendResult(target_id, name, "skipped", f"cannot resolve peer: {exc}"[:280])
 
-        stars = self._stars_required(entity)
-        if stars > 0:
-            return SendResult(
-                target_id,
-                name,
-                "skipped_stars",
-                f"requires {stars} Telegram Stars to send — auto-skipped",
-            )
+            # Groups listed for a broadcast were already Stars-checked when
+            # listed, and Telegram itself refuses an unpaid send to a paid
+            # group (classified as skipped_stars below) -- this pre-check is
+            # only needed on this path, where nothing has looked yet.
+            stars = self._stars_required(entity)
+            if stars > 0:
+                return SendResult(
+                    target_id,
+                    name,
+                    "skipped_stars",
+                    f"requires {stars} Telegram Stars to send — auto-skipped",
+                )
 
         async def do_send():
             if source_message_id is not None:
@@ -607,6 +677,7 @@ class TelegramService:
         max_slowmode_wait: int = 300,
         verify_seconds: float = 1.5,
         source_message_id: int | None = None,
+        access_hash: int | None = None,
     ) -> SendResult:
         """Send to one group over an already-connected client from
         connect_client() -- the bulk-broadcast counterpart to send_to_group."""
@@ -620,6 +691,7 @@ class TelegramService:
             max_slowmode_wait=max_slowmode_wait,
             verify_seconds=verify_seconds,
             source_message_id=source_message_id,
+            access_hash=access_hash,
         )
 
     async def leave_groups(

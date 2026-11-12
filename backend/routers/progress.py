@@ -15,7 +15,7 @@ router = APIRouter(prefix="/profiles/{profile_id}", tags=["progress"])
 def active_job(
     profile: ProfileRow = Depends(get_owned_profile), store: Storage = Depends(get_store)
 ):
-    job = store.get_active_job(profile.id)
+    job = store.get_active_job(profile.id, include_pending=False)
     return job_out(job) if job else None
 
 
@@ -23,7 +23,7 @@ def active_job(
 def latest_job(
     profile: ProfileRow = Depends(get_owned_profile), store: Storage = Depends(get_store)
 ):
-    job = store.get_latest_job(profile.id)
+    job = store.get_latest_job(profile.id, include_pending=False)
     return job_out(job) if job else None
 
 
@@ -33,7 +33,7 @@ def job_results(
     profile: ProfileRow = Depends(get_owned_profile),
     store: Storage = Depends(get_store),
 ):
-    job = store.get_job(job_id)
+    job = store.get_job(job_id, include_pending=False)
     if not job or job.profile_id != profile.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Job not found")
     # Polled every 2s while a job is active (Progress.tsx), and the UI only
