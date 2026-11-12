@@ -50,6 +50,9 @@ class JobRunner:
         worker = self._workers.get(profile_id)
         return bool(worker and worker.thread.is_alive())
 
+    def active_count(self) -> int:
+        return sum(1 for w in list(self._workers.values()) if w.thread.is_alive())
+
     def active_job_id(self, profile_id: int) -> int | None:
         worker = self._workers.get(profile_id)
         return worker.active_job_id if worker else None
@@ -304,7 +307,10 @@ class JobRunner:
                             f"requires {t.stars_required} Stars — auto-skipped",
                         )
                     else:
-                        pending.append({"id": t.id, "name": t.name})
+                        entry = {"id": t.id, "name": t.name}
+                        if t.access_hash:
+                            entry["h"] = t.access_hash
+                        pending.append(entry)
 
                 store.update_job(
                     job_id,
@@ -475,6 +481,7 @@ class JobRunner:
                         max_slowmode_wait=max_slow,
                         verify_seconds=1.5,
                         source_message_id=source_message_id,
+                        access_hash=target.get("h"),
                     )
                 except Exception as exc:
                     from forwarder.telegram_service import SendResult
