@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from forwarder.eta import Eta
 from forwarder.storage import JobResultRow, JobRow, ProfileRow, SendLogRow
 
 from backend import schemas
-from backend.eta import elapsed_seconds
+from backend.eta import LiveFigures, elapsed_seconds
 
 
 def profile_out(p: ProfileRow) -> schemas.ProfileOut:
@@ -23,7 +22,8 @@ def profile_out(p: ProfileRow) -> schemas.ProfileOut:
     )
 
 
-def job_out(j: JobRow, eta: Eta | None = None) -> schemas.JobOut:
+def job_out(j: JobRow, live: LiveFigures | None = None) -> schemas.JobOut:
+    eta = live.eta if live else None
     return schemas.JobOut(
         id=j.id,
         profile_id=j.profile_id,
@@ -41,7 +41,8 @@ def job_out(j: JobRow, eta: Eta | None = None) -> schemas.JobOut:
         current_name=j.current_name,
         current_detail=j.current_detail,
         error=j.error,
-        summary=j.summary,
+        # A job only stores its summary on completion; until then, the live tally.
+        summary=j.summary or (live.summary if live else {}),
         created_at=j.created_at,
         updated_at=j.updated_at,
         elapsed_seconds=elapsed_seconds(j),

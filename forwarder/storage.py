@@ -1519,6 +1519,15 @@ class Storage:
             )
             return [r["created_at"] for r in cur.fetchall()]
 
+    def count_job_results(self, job_id: int) -> dict[str, int]:
+        """How many of this job's results ended in each status so far."""
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT status, COUNT(*) AS n FROM job_results WHERE job_id = %s GROUP BY status",
+                (job_id,),
+            )
+            return {r["status"]: int(r["n"]) for r in cur.fetchall()}
+
     def record_send_result(
         self,
         job_id: int,

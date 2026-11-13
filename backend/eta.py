@@ -1,22 +1,46 @@
-"""Live estimate for the job endpoints.
+"""Live figures for a job that is still sending: when it will finish, and
+how its sends have gone so far.
 
-The timings an estimate is built from only change when another group
-finishes, so they are read once per finished group and shared by every poll
-(and every open tab) until the next one -- a status poll costs no extra
-query most of the time.
+Both only change when another group finishes, so they are read once per
+finished group and shared by every poll (and every open tab) until the next
+one -- a status poll costs no extra query most of the time.
 """
 from __future__ import annotations
 
 import threading
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from forwarder.eta import WINDOW, Eta, estimate
 from forwarder.storage import JobRow, Storage
 
 _LOCK = threading.Lock()
-# job id -> (job.done when read, result times newest first)
-_TIMES: dict[int, tuple[int, list[datetime]]] = {}
+# job id -> (job.done when read, result times newest first, results per status)
+_LIVE: dict[int, tuple[int, list[datetime], dict[str, int]]] = {}
 _MAX_JOBS = 512
+
+
+@dataclass(frozen=True)
+class LiveFigures:
+    eta: Eta | None
+    #: Same shape as the summary a finished job stores, so the UI reads one
+    #: thing whether the job is running or done.
+    summary: dict[str, int]
+
+
+def summarize(counts: dict[str, int]) -> dict[str, int]:
+    """Results per status -> the tallies shown to the user. Mirrors what
+    job_runner stores as a job's summary when it completes."""
+    return {
+        "ok": counts.get("ok", 0),
+        "auto_deleted": counts.get("auto_deleted", 0),
+        "skipped_stars": counts.get("skipped_stars", 0),
+        "other_skips": sum(
+            n for status, n in counts.items() if status.startswith("skipped") and status != "skipped_stars"
+        ),
+        "errors": counts.get("error", 0),
+        "total_results": sum(counts.values()),
+    }
 
 
 def parse_time(value: str | None) -> datetime | None:
@@ -56,22 +80,24 @@ def elapsed_seconds(job: JobRow, now: datetime | None = None) -> float | None:
     return max((end - start).total_seconds(), 0.0)
 
 
-def eta_for(job: JobRow, store: Storage) -> Eta | None:
-    if job.status != "running" or job.total <= 0 or job.done >= job.total:
+def live_figures(job: JobRow, store: Storage) -> LiveFigures | None:
+    """None unless the job is sending right now."""
+    if job.status != "running" or job.total <= 0:
         return None
 
     with _LOCK:
-        cached = _TIMES.get(job.id)
+        cached = _LIVE.get(job.id)
     if cached and cached[0] == job.done:
-        times = cached[1]
+        _, times, counts = cached
     else:
         times = store.list_recent_result_times(job.id, WINDOW + 1) if job.done else []
+        counts = store.count_job_results(job.id)
         with _LOCK:
-            if len(_TIMES) >= _MAX_JOBS:
-                _TIMES.clear()
-            _TIMES[job.id] = (job.done, times)
+            if len(_LIVE) >= _MAX_JOBS:
+                _LIVE.clear()
+            _LIVE[job.id] = (job.done, times, counts)
 
-    return estimate(
+    eta = estimate(
         now=datetime.now(timezone.utc),
         total=job.total,
         done=job.done,
@@ -80,3 +106,4 @@ def eta_for(job: JobRow, store: Storage) -> Eta | None:
         result_times=times,
         sending_since=parse_time(job.updated_at),
     )
+    return LiveFigures(eta=eta, summary=summarize(counts))

@@ -128,26 +128,40 @@ class _CountingStore:
         now = datetime.now(timezone.utc)
         return [now - timedelta(seconds=5.0 * i) for i in range(min(limit, 100))]
 
+    def count_job_results(self, job_id: int) -> dict[str, int]:
+        return {"ok": 90, "error": 4, "skipped_slowmode": 3, "skipped_forbidden": 1, "skipped_stars": 5, "auto_deleted": 2}
+
 
 class LiveEtaTest(unittest.TestCase):
     def setUp(self) -> None:
-        live_eta._TIMES.clear()
+        live_eta._LIVE.clear()
 
     def test_only_a_sending_job_gets_an_estimate(self) -> None:
         store = _CountingStore()
         for status in ("queued", "scheduled", "interrupted", "completed", "cancelled", "failed"):
-            self.assertIsNone(live_eta.eta_for(job(status=status), store), status)
-        self.assertIsNone(live_eta.eta_for(job(total=0, done=0), store))  # still loading groups
-        self.assertIsNone(live_eta.eta_for(job(done=300), store))  # nothing left
+            self.assertIsNone(live_eta.live_figures(job(status=status), store), status)
+        self.assertIsNone(live_eta.live_figures(job(total=0, done=0), store))  # still loading groups
         self.assertEqual(store.reads, 0)
+        # Every group done but the job not closed yet (Discord, wrap-up):
+        # the tally is still live, there is just nothing left to estimate.
+        wrapping_up = live_eta.live_figures(job(done=300), store)
+        self.assertIsNone(wrapping_up.eta)
+        self.assertEqual(wrapping_up.summary["ok"], 90)
 
     def test_timings_are_read_once_per_finished_group_not_once_per_poll(self) -> None:
         store = _CountingStore()
         for _ in range(25):
-            self.assertIsNotNone(live_eta.eta_for(job(done=100), store))
+            self.assertIsNotNone(live_eta.live_figures(job(done=100), store).eta)
         self.assertEqual(store.reads, 1)
-        live_eta.eta_for(job(done=101), store)
+        live_eta.live_figures(job(done=101), store)
         self.assertEqual(store.reads, 2)
+
+    def test_live_tally_has_the_shape_of_a_finished_jobs_summary(self) -> None:
+        figures = live_eta.live_figures(job(done=100), _CountingStore())
+        self.assertEqual(
+            figures.summary,
+            {"ok": 90, "auto_deleted": 2, "skipped_stars": 5, "other_skips": 4, "errors": 4, "total_results": 105},
+        )
 
     def test_elapsed_runs_from_the_scheduled_time_and_stops_when_the_job_ends(self) -> None:
         at = datetime(2026, 11, 13, 12, 0, tzinfo=timezone.utc)
@@ -176,10 +190,11 @@ class ResultTimesTest(unittest.TestCase):
         self.assertEqual(len(store.list_recent_result_times(job_id, 50)), 6)
 
         store.update_job(job_id, status="running", total=10, done=6)
-        live_eta._TIMES.clear()
-        eta = live_eta.eta_for(store.get_active_job(profile_id, include_pending=False), store)
-        self.assertIsNotNone(eta)
-        self.assertGreater(eta.seconds_left, 0)
+        live_eta._LIVE.clear()
+        figures = live_eta.live_figures(store.get_active_job(profile_id, include_pending=False), store)
+        self.assertGreater(figures.eta.seconds_left, 0)
+        self.assertEqual(figures.summary["ok"], 7)  # the Discord result counts in the tally
+        self.assertEqual(store.count_job_results(job_id), {"ok": 7})
         store.update_job(job_id, status="completed")
 
 
