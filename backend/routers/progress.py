@@ -7,6 +7,7 @@ from forwarder.storage import ProfileRow, Storage
 from backend import schemas
 from backend.converters import job_out, job_result_out, send_log_out
 from backend.deps import get_owned_profile, get_store
+from backend.eta import eta_for
 
 router = APIRouter(prefix="/profiles/{profile_id}", tags=["progress"])
 
@@ -16,7 +17,7 @@ def active_job(
     profile: ProfileRow = Depends(get_owned_profile), store: Storage = Depends(get_store)
 ):
     job = store.get_active_job(profile.id, include_pending=False)
-    return job_out(job) if job else None
+    return job_out(job, eta_for(job, store)) if job else None
 
 
 @router.get("/jobs/latest")

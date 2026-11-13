@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from forwarder.eta import Eta
 from forwarder.storage import JobResultRow, JobRow, ProfileRow, SendLogRow
 
 from backend import schemas
+from backend.eta import elapsed_seconds
 
 
 def profile_out(p: ProfileRow) -> schemas.ProfileOut:
@@ -21,7 +23,7 @@ def profile_out(p: ProfileRow) -> schemas.ProfileOut:
     )
 
 
-def job_out(j: JobRow) -> schemas.JobOut:
+def job_out(j: JobRow, eta: Eta | None = None) -> schemas.JobOut:
     return schemas.JobOut(
         id=j.id,
         profile_id=j.profile_id,
@@ -42,6 +44,11 @@ def job_out(j: JobRow) -> schemas.JobOut:
         summary=j.summary,
         created_at=j.created_at,
         updated_at=j.updated_at,
+        elapsed_seconds=elapsed_seconds(j),
+        eta_seconds=round(eta.seconds_left, 1) if eta else None,
+        eta_pace_seconds=round(eta.pace_seconds, 2) if eta else None,
+        eta_measured=eta.measured if eta else None,
+        eta_holding=eta.holding if eta else None,
     )
 
 

@@ -201,6 +201,13 @@ class JobOut(BaseModel):
     summary: dict
     created_at: str
     updated_at: str
+    # How long the job has been running, or ran for once it is over.
+    elapsed_seconds: float | None = None
+    # Live estimate, present only while the job is sending (backend/eta.py).
+    eta_seconds: float | None = None
+    eta_pace_seconds: float | None = None
+    eta_measured: bool | None = None
+    eta_holding: bool | None = None
 
 
 class JobResultOut(BaseModel):

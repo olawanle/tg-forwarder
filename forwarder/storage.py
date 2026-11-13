@@ -6,6 +6,7 @@ import threading
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Iterator
 
 import psycopg2
@@ -1502,6 +1503,21 @@ class Storage:
             )
             for r in rows
         ]
+
+    def list_recent_result_times(self, job_id: int, limit: int) -> list[datetime]:
+        """When this job's latest Telegram results were recorded, newest
+        first -- what the live estimate measures the job's pace from."""
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT created_at FROM job_results
+                WHERE job_id = %s AND platform = 'telegram'
+                ORDER BY id DESC
+                LIMIT %s
+                """,
+                (job_id, limit),
+            )
+            return [r["created_at"] for r in cur.fetchall()]
 
     def record_send_result(
         self,
