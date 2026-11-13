@@ -4,6 +4,7 @@ import { Icon } from "../components/Icon";
 import { Alert, Avatar, Button, Card, PageHead, Pill, Sheet, Skeleton } from "../components/ui";
 import { useProfiles } from "../profile/ProfileContext";
 import { AddProfileWizard } from "./AddProfileWizard";
+import { BroadcastAllButton } from "../components/BroadcastAll";
 import { api, ApiError } from "../api/client";
 import type { Profile } from "../api/types";
 
@@ -36,9 +37,12 @@ export function Profiles() {
         title="Profiles"
         sub="One profile is one Telegram account. Broadcasts go out from whichever one is active."
         actions={
-          <Button variant="primary" icon="plus" onClick={() => setWizardOpen(true)}>
-            Add profile
-          </Button>
+          <>
+            <BroadcastAllButton />
+            <Button variant="primary" icon="plus" onClick={() => setWizardOpen(true)}>
+              Add profile
+            </Button>
+          </>
         }
       />
 

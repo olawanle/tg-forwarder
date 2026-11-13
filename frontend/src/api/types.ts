@@ -181,3 +181,21 @@ export interface AdminUserStats {
   distinct_login_ips_7d: number;
   recent_logins: LoginAuditEntry[];
 }
+
+/** One profile in "broadcast all profiles": what it would send, or why not. */
+export interface ProfilePlan {
+  profile_id: number;
+  label: string;
+  ready: boolean;
+  reason: string;
+  mode: string;
+  variants: number;
+  delay_seconds: number;
+  max_slowmode_wait: number;
+  include_discord: boolean;
+  from_last_broadcast: boolean;
+  preview: string;
+  /** Present on the start response. */
+  started?: boolean;
+  job_id?: number;
+}

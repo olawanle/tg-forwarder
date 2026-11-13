@@ -1357,6 +1357,21 @@ class Storage:
             row = cur.fetchone()
         return self._job_from_row(row) if row else None
 
+    def get_last_run_job(self, profile_id: int) -> JobRow | None:
+        """The profile's most recent broadcast that actually started, i.e.
+        not one still waiting for its scheduled time."""
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT {_job_columns(False)} FROM jobs
+                WHERE profile_id = %s AND status <> 'scheduled'
+                ORDER BY id DESC LIMIT 1
+                """,
+                (profile_id,),
+            )
+            row = cur.fetchone()
+        return self._job_from_row(row) if row else None
+
     def list_resumable_jobs(self) -> list[JobRow]:
         """Unscoped across all profiles — used on boot to resume every
         profile's own interrupted/queued job."""
