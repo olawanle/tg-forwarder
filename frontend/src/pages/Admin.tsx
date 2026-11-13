@@ -1,18 +1,11 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { GlassCard } from "../components/GlassCard";
-import { IconButton } from "../components/Small";
-import { Button } from "../components/Button";
-import { Field, Input } from "../components/Field";
-import { SegmentedTabs, ToggleSwitch, AvatarBadge } from "../components/Small";
-import { BottomSheet } from "../components/BottomSheet";
-import { Slider } from "../components/Slider";
+import { Alert, Avatar, Button, Card, CardHead, Empty, Field, Input, PageHead, Pill, Sheet, SkeletonRows, Slider, Switch, Tabs } from "../components/ui";
 import { api, ApiError } from "../api/client";
 import type { AdminUser, AdminUserStats, AppSettings, JobDuration } from "../api/types";
+import { fmtAgo, fmtDateTime, fmtDuration, parseServerTime } from "../lib/time";
 
 export function Admin() {
-  const navigate = useNavigate();
   const qc = useQueryClient();
 
   const [email, setEmail] = useState("");
@@ -120,438 +113,367 @@ export function Admin() {
     },
   });
 
+  const users = usersQuery.data ?? [];
+
   return (
-    <div className="page page--no-nav">
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
-        <div>
-          <h1 className="page-title">Admin</h1>
-          <div className="page-subtitle">The only way anyone gets an account.</div>
-        </div>
-        <IconButton ariaLabel="Back" onClick={() => navigate("/profiles")}>
-          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
-            <path d="m15 18-6-6 6-6" />
-          </svg>
-        </IconButton>
-      </div>
+    <div className="page">
+      <PageHead title="Admin" sub="Accounts, defaults and how recent broadcasts have been running." />
 
-      <GlassCard>
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <div>
-            <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: "-0.02em" }}>Default send delay</div>
-            <div style={{ fontSize: 12.5, color: "var(--text3)", marginTop: 3, lineHeight: 1.4 }}>
-              What Compose starts new broadcasts at. Users can still change it per-broadcast — this
-              just sets the starting point, down to 0s for anyone who doesn't want the 3s default.
-            </div>
+      <div className="grid grid--main">
+        <div className="stack">
+          <div className="spread">
+            <span className="section-title">
+              Users <span className="faint num">· {users.length}</span>
+            </span>
           </div>
-          <Slider label="Default delay" value={defaultDelay} min={0} max={60} step={1} suffix="s" onChange={setDefaultDelay} />
-          {delaySaveNotice && (
-            <div style={{ fontSize: 12.5, color: "var(--ok)", fontWeight: 600 }}>{delaySaveNotice}</div>
-          )}
-          <Button
-            variant="outline"
-            small
-            onClick={() => {
-              setDelaySaveNotice("");
-              saveDefaultDelay.mutate();
-            }}
-            disabled={saveDefaultDelay.isPending}
-          >
-            {saveDefaultDelay.isPending ? "Saving…" : "Save default"}
-          </Button>
-        </div>
-      </GlassCard>
 
-      <GlassCard>
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          <div>
-            <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: "-0.02em" }}>Recent broadcast durations</div>
-            <div style={{ fontSize: 12.5, color: "var(--text3)", marginTop: 3, lineHeight: 1.4 }}>
-              Sec/target rising with delay unchanged points to Telegram throttling harder, not a setting.
-              Total climbing points to more groups to message.
-            </div>
-          </div>
-          {jobDurations.isLoading ? (
-            <div style={{ color: "var(--text3)", fontSize: 13, textAlign: "center", padding: "12px 0" }}>Loading…</div>
-          ) : (jobDurations.data ?? []).length === 0 ? (
-            <div style={{ color: "var(--text3)", fontSize: 13, textAlign: "center", padding: "12px 0" }}>
-              No completed broadcasts yet.
-            </div>
+          {usersQuery.isLoading ? (
+            <Card flush>
+              <SkeletonRows count={5} />
+            </Card>
           ) : (
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-                <thead>
-                  <tr style={{ color: "var(--text3)", textAlign: "left" }}>
-                    <th style={{ padding: "4px 8px 4px 0", fontWeight: 700 }}>Job</th>
-                    <th style={{ padding: "4px 8px", fontWeight: 700 }}>Profile</th>
-                    <th style={{ padding: "4px 8px", fontWeight: 700 }}>Targets</th>
-                    <th style={{ padding: "4px 8px", fontWeight: 700 }}>Delay</th>
-                    <th style={{ padding: "4px 8px", fontWeight: 700 }}>Duration</th>
-                    <th style={{ padding: "4px 0 4px 8px", fontWeight: 700 }}>Sec/target</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(jobDurations.data ?? []).map((j) => (
-                    <tr key={j.id} style={{ borderTop: "1px solid var(--hair)" }}>
-                      <td style={{ padding: "6px 8px 6px 0", fontWeight: 700 }}>#{j.id}</td>
-                      <td style={{ padding: "6px 8px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 90 }}>
-                        {j.profile_label}
-                      </td>
-                      <td style={{ padding: "6px 8px" }}>{j.total}</td>
-                      <td style={{ padding: "6px 8px" }}>{j.delay_seconds}s</td>
-                      <td style={{ padding: "6px 8px" }}>
-                        {j.duration_seconds ? `${Math.round(j.duration_seconds / 60)}m` : "—"}
-                      </td>
-                      <td style={{ padding: "6px 0 6px 8px", fontWeight: 700 }}>
-                        {j.seconds_per_target ?? "—"}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            users.map((u) => (
+              <Card key={u.id} style={{ opacity: u.is_active ? 1 : 0.6 }}>
+                <div className="cluster" style={{ flexWrap: "nowrap", alignItems: "flex-start" }}>
+                  <Avatar name={u.email} size={40} />
+                  <div className="grow">
+                    <div className="row-title">{u.email}</div>
+                    <div className="row-sub">
+                      {u.profile_count} profile{u.profile_count === 1 ? "" : "s"} ·{" "}
+                      {u.default_delay_seconds !== null ? `${u.default_delay_seconds}s delay` : "default delay"} · joined{" "}
+                      {fmtAgo(parseServerTime(u.created_at))}
+                    </div>
+                    <div className="row-sub">
+                      {u.last_login_at
+                        ? `Last login ${fmtAgo(parseServerTime(u.last_login_at))}${u.last_login_ip ? ` · ${u.last_login_ip}` : ""}`
+                        : "Never logged in"}
+                    </div>
+                  </div>
+                </div>
+                <div className="cluster" style={{ marginTop: 12, gap: 6 }}>
+                  <Pill tone={u.role === "admin" ? "accent" : "neutral"}>{u.role}</Pill>
+                  <Pill tone={u.totp_exempt ? "warn" : u.totp_enabled ? "ok" : "neutral"}>
+                    {u.totp_exempt ? "2FA exempt" : u.totp_enabled ? "2FA on" : "2FA not set up"}
+                  </Pill>
+                  {!u.is_active && <Pill tone="bad">Deactivated</Pill>}
+                </div>
+                {resetResult?.id === u.id && (
+                  <div style={{ marginTop: 12 }}>
+                    <Alert tone="ok">
+                      New temporary password: <strong className="mono">{resetResult.password}</strong>
+                    </Alert>
+                  </div>
+                )}
+                {totpResetId === u.id && (
+                  <div style={{ marginTop: 12 }}>
+                    <Alert tone="ok">2FA reset. They'll set it up again on their next login.</Alert>
+                  </div>
+                )}
+                <div className="btn-row" style={{ marginTop: 14 }}>
+                  <Button size="sm" icon="chart" onClick={() => setStatsUser(u)}>
+                    Stats
+                  </Button>
+                  <Button
+                    size="sm"
+                    icon="clock"
+                    onClick={() => {
+                      setDelayEditValue(u.default_delay_seconds ?? defaultDelay);
+                      setDelayEditUser(u);
+                    }}
+                  >
+                    Delay
+                  </Button>
+                  <Button size="sm" icon="key" onClick={() => handleReset(u)}>
+                    Reset password
+                  </Button>
+                  {u.totp_enabled && !u.totp_exempt && (
+                    <Button
+                      size="sm"
+                      onClick={() => {
+                        if (window.confirm(`Reset 2FA for ${u.email}? They'll set it up again next login.`)) {
+                          resetTotp.mutate(u.id);
+                        }
+                      }}
+                    >
+                      Reset 2FA
+                    </Button>
+                  )}
+                  {u.totp_exempt ? (
+                    <Button
+                      size="sm"
+                      disabled={setTotpExempt.isPending}
+                      onClick={() => {
+                        if (window.confirm(`Require 2FA again for ${u.email}? They'll set it up from scratch next login.`)) {
+                          setTotpExempt.mutate({ id: u.id, exempt: false });
+                        }
+                      }}
+                    >
+                      Require 2FA again
+                    </Button>
+                  ) : (
+                    <Button
+                      size="sm"
+                      disabled={setTotpExempt.isPending}
+                      onClick={() => {
+                        if (
+                          window.confirm(
+                            `Remove the authenticator requirement for ${u.email}? They'll be able to log in with just their password — no 2FA at all — and stay logged in on multiple devices at once (normally a new login signs out every other device), until you require it again.`,
+                          )
+                        ) {
+                          setTotpExempt.mutate({ id: u.id, exempt: true });
+                        }
+                      }}
+                    >
+                      Remove authenticator
+                    </Button>
+                  )}
+                  <Button size="sm" variant={u.is_active ? "danger" : "primary"} onClick={() => setActive.mutate({ id: u.id, active: !u.is_active })}>
+                    {u.is_active ? "Deactivate" : "Reactivate"}
+                  </Button>
+                </div>
+              </Card>
+            ))
           )}
         </div>
-      </GlassCard>
 
-      <GlassCard>
-        <div style={{ display: "flex", flexDirection: "column", gap: 13 }}>
-          <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: "-0.02em" }}>Create a user</div>
-          <Field label="Email">
-            <Input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="name@email.com"
-            />
-          </Field>
-          <SegmentedTabs
-            value={role}
-            onChange={setRole}
-            options={[
-              { value: "user", label: "user" },
-              { value: "admin", label: "admin" },
-            ]}
-          />
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <span style={{ fontSize: 13.5, fontWeight: 700 }}>Generate a temporary password</span>
-            <ToggleSwitch on={autoPassword} onChange={setAutoPassword} />
-          </div>
-          {!autoPassword && (
-            <Field label="Temporary password">
-              <Input
-                type="password"
-                value={manualPassword}
-                onChange={(e) => setManualPassword(e.target.value)}
+        <div className="stack">
+          <Card>
+            <CardHead title="Create a user" sub="The only way anyone gets an account." />
+            <div className="stack">
+              <Field label="Email">
+                <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@email.com" />
+              </Field>
+              <Tabs
+                value={role}
+                onChange={setRole}
+                options={[
+                  { value: "user", label: "User" },
+                  { value: "admin", label: "Admin" },
+                ]}
               />
-            </Field>
-          )}
-          {error && <div style={{ color: "var(--bad)", fontSize: 13 }}>{error}</div>}
-          <Button
-            variant="secondary"
-            onClick={() => {
-              setError("");
-              if (!email.trim()) {
-                setError("Email is required.");
-                return;
-              }
-              createUser.mutate();
-            }}
-            disabled={createUser.isPending}
-          >
-            {createUser.isPending ? "Creating…" : "Create user"}
-          </Button>
-          {tempPassword && (
-            <div style={{ background: "var(--ok-soft)", borderRadius: 18, padding: "13px 14px" }}>
-              <div style={{ fontSize: 11.5, fontWeight: 700, color: "var(--text2)" }}>
-                Share this once for {tempPassword.email} — it won't be shown again
+              <div className="setting">
+                <div className="setting-title">Generate a temporary password</div>
+                <Switch on={autoPassword} onChange={setAutoPassword} label="Generate a temporary password" />
               </div>
-              <div style={{ fontFamily: "ui-monospace, 'SF Mono', monospace", fontSize: 16, fontWeight: 700, marginTop: 4 }}>
-                {tempPassword.password}
-              </div>
+              {!autoPassword && (
+                <Field label="Temporary password">
+                  <Input type="password" value={manualPassword} onChange={(e) => setManualPassword(e.target.value)} />
+                </Field>
+              )}
+              {error && <Alert tone="bad">{error}</Alert>}
+              <Button
+                variant="primary"
+                icon="userPlus"
+                block
+                loading={createUser.isPending}
+                onClick={() => {
+                  setError("");
+                  if (!email.trim()) {
+                    setError("Email is required.");
+                    return;
+                  }
+                  createUser.mutate();
+                }}
+              >
+                {createUser.isPending ? "Creating…" : "Create user"}
+              </Button>
+              {tempPassword && (
+                <Alert tone="ok">
+                  Share this once with {tempPassword.email}. It won't be shown again.
+                  <div className="mono" style={{ fontSize: 16, fontWeight: 600, marginTop: 4, color: "var(--text)" }}>
+                    {tempPassword.password}
+                  </div>
+                </Alert>
+              )}
             </div>
-          )}
-        </div>
-      </GlassCard>
+          </Card>
 
-      <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: "-0.02em", padding: "4px 4px 0" }}>
-        Users · {usersQuery.data?.length ?? 0}
+          <Card>
+            <CardHead title="Default send delay" sub="Where Compose starts for new broadcasts. Users can still change it each time." />
+            <div className="stack">
+              <Slider label="Default delay" value={defaultDelay} min={0} max={60} step={1} format={(v) => `${v}s`} onChange={setDefaultDelay} />
+              {delaySaveNotice && <Alert tone="ok">{delaySaveNotice}</Alert>}
+              <Button
+                block
+                loading={saveDefaultDelay.isPending}
+                onClick={() => {
+                  setDelaySaveNotice("");
+                  saveDefaultDelay.mutate();
+                }}
+              >
+                {saveDefaultDelay.isPending ? "Saving…" : "Save default"}
+              </Button>
+            </div>
+          </Card>
+        </div>
       </div>
 
-      {usersQuery.isLoading ? (
-        <GlassCard>Loading…</GlassCard>
-      ) : (
-        (usersQuery.data ?? []).map((u) => (
-          <GlassCard key={u.id} style={{ opacity: u.is_active ? 1 : 0.6 }}>
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                <AvatarBadge seed={u.email} size={42} fontSize={14} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 14, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {u.email}
-                  </div>
-                  <div style={{ fontSize: 12, color: "var(--text3)", marginTop: 2 }}>
-                    {u.profile_count} profile{u.profile_count === 1 ? "" : "s"} · {u.created_at.slice(0, 10)} ·{" "}
-                    {u.default_delay_seconds !== null ? `${u.default_delay_seconds}s delay` : "default delay"}
-                  </div>
-                  <div style={{ fontSize: 11.5, color: "var(--text3)", marginTop: 2 }}>
-                    {u.last_login_at
-                      ? `Last login ${u.last_login_at.slice(0, 16).replace("T", " ")}${u.last_login_ip ? ` · ${u.last_login_ip}` : ""}`
-                      : "Never logged in"}
-                  </div>
-                </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-end" }}>
-                  <span
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 700,
-                      padding: "4px 10px",
-                      borderRadius: 999,
-                      background: u.role === "admin" ? "var(--accent-soft)" : "var(--glass-2)",
-                      color: u.role === "admin" ? "var(--accent)" : "var(--text2)",
-                    }}
-                  >
-                    {u.role}
-                  </span>
-                  <span
-                    style={{
-                      fontSize: 10.5,
-                      fontWeight: 700,
-                      padding: "3px 9px",
-                      borderRadius: 999,
-                      background: u.totp_exempt
-                        ? "var(--warn-soft)"
-                        : u.totp_enabled
-                          ? "var(--ok-soft)"
-                          : "var(--glass-2)",
-                      color: u.totp_exempt ? "var(--warn)" : u.totp_enabled ? "var(--ok)" : "var(--text3)",
-                    }}
-                  >
-                    {u.totp_exempt ? "2FA exempt" : u.totp_enabled ? "2FA on" : "2FA not set up"}
-                  </span>
-                </div>
-              </div>
-              {resetResult?.id === u.id && (
-                <div style={{ background: "var(--ok-soft)", borderRadius: 14, padding: "10px 12px", fontSize: 12.5 }}>
-                  New temp password: <strong style={{ fontFamily: "ui-monospace, monospace" }}>{resetResult.password}</strong>
-                </div>
-              )}
-              {totpResetId === u.id && (
-                <div style={{ background: "var(--ok-soft)", borderRadius: 14, padding: "10px 12px", fontSize: 12.5 }}>
-                  2FA reset — they'll set it up again on their next login.
-                </div>
-              )}
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <Button variant="outline" small onClick={() => setStatsUser(u)}>
-                  View stats
-                </Button>
-                <Button
-                  variant="outline"
-                  small
-                  onClick={() => {
-                    setDelayEditValue(u.default_delay_seconds ?? defaultDelay);
-                    setDelayEditUser(u);
-                  }}
-                >
-                  Delay
-                </Button>
-                <Button variant="outline" small onClick={() => handleReset(u)}>
-                  Reset password
-                </Button>
-                {u.totp_enabled && !u.totp_exempt && (
-                  <Button
-                    variant="outline"
-                    small
-                    onClick={() => {
-                      if (window.confirm(`Reset 2FA for ${u.email}? They'll set it up again next login.`)) {
-                        resetTotp.mutate(u.id);
-                      }
-                    }}
-                  >
-                    Reset 2FA
-                  </Button>
-                )}
-                {u.totp_exempt ? (
-                  <Button
-                    variant="outline"
-                    small
-                    disabled={setTotpExempt.isPending}
-                    onClick={() => {
-                      if (window.confirm(`Require 2FA again for ${u.email}? They'll set it up from scratch next login.`)) {
-                        setTotpExempt.mutate({ id: u.id, exempt: false });
-                      }
-                    }}
-                  >
-                    Require 2FA again
-                  </Button>
-                ) : (
-                  <Button
-                    variant="outline"
-                    small
-                    disabled={setTotpExempt.isPending}
-                    onClick={() => {
-                      if (
-                        window.confirm(
-                          `Remove the authenticator requirement for ${u.email}? They'll be able to log in with just their password — no 2FA at all — and stay logged in on multiple devices at once (normally a new login signs out every other device), until you require it again.`,
-                        )
-                      ) {
-                        setTotpExempt.mutate({ id: u.id, exempt: true });
-                      }
-                    }}
-                  >
-                    Remove authenticator
-                  </Button>
-                )}
-                <Button
-                  variant={u.is_active ? "danger" : "primary"}
-                  small
-                  onClick={() => setActive.mutate({ id: u.id, active: !u.is_active })}
-                >
-                  {u.is_active ? "Deactivate" : "Reactivate"}
-                </Button>
-              </div>
-            </div>
-          </GlassCard>
-        ))
-      )}
+      <Card flush>
+        <CardHead
+          pad
+          title="Recent broadcast durations"
+          sub="Seconds per group rising with the delay unchanged points to Telegram throttling harder. Duration rising with it flat points to more groups."
+        />
+        {jobDurations.isLoading ? (
+          <SkeletonRows count={4} />
+        ) : (jobDurations.data ?? []).length === 0 ? (
+          <Empty icon="clock" title="No completed broadcasts yet" />
+        ) : (
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Job</th>
+                  <th>Profile</th>
+                  <th>Finished</th>
+                  <th className="right">Groups</th>
+                  <th className="right">Delay</th>
+                  <th className="right">Duration</th>
+                  <th className="right">Sec / group</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(jobDurations.data ?? []).map((j) => (
+                  <tr key={j.id}>
+                    <td className="mono">#{j.id}</td>
+                    <td className="truncate" style={{ maxWidth: 180 }}>{j.profile_label}</td>
+                    <td className="faint">{fmtDateTime(parseServerTime(j.updated_at))}</td>
+                    <td className="right mono">{j.total}</td>
+                    <td className="right mono">{j.delay_seconds}s</td>
+                    <td className="right mono">{j.duration_seconds ? fmtDuration(j.duration_seconds) : "—"}</td>
+                    <td className="right mono" style={{ fontWeight: 600 }}>{j.seconds_per_target ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
 
       {statsUser && (
-        <BottomSheet onClose={() => setStatsUser(null)}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <AvatarBadge seed={statsUser.email} size={40} fontSize={14} />
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 16, fontWeight: 800, letterSpacing: "-0.02em", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {statsUser.email}
-              </div>
-              <div style={{ fontSize: 12, color: "var(--text3)" }}>Activity across all profiles</div>
+        <Sheet onClose={() => setStatsUser(null)} wide>
+          <div className="cluster" style={{ flexWrap: "nowrap" }}>
+            <Avatar name={statsUser.email} size={42} />
+            <div className="grow">
+              <div className="sheet-title truncate" style={{ fontSize: 17 }}>{statsUser.email}</div>
+              <div className="faint" style={{ fontSize: 12.5 }}>Activity across all profiles</div>
             </div>
           </div>
 
           {userStats.isLoading ? (
-            <div style={{ color: "var(--text3)", fontSize: 13, textAlign: "center", padding: "16px 0" }}>Loading…</div>
+            <SkeletonRows count={3} />
           ) : userStats.data ? (
             <>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                <div className="glass-card--soft" style={{ border: "1px solid var(--stroke)" }}>
-                  <div className="mono" style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.03em", color: "var(--ok)" }}>
-                    {userStats.data.total_sent}
+              <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <Card tight>
+                  <div className="stat">
+                    <span className="eyebrow">Sent</span>
+                    <span className="stat-value" style={{ color: "var(--ok)" }}>{userStats.data.total_sent.toLocaleString()}</span>
                   </div>
-                  <div style={{ fontSize: 11.5, color: "var(--text2)", fontWeight: 600, marginTop: 2 }}>Sent</div>
-                </div>
-                <div className="glass-card--soft" style={{ border: "1px solid var(--stroke)" }}>
-                  <div className="mono" style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.03em", color: "var(--bad)" }}>
-                    {userStats.data.total_errors}
+                </Card>
+                <Card tight>
+                  <div className="stat">
+                    <span className="eyebrow">Errors</span>
+                    <span className="stat-value" style={{ color: userStats.data.total_errors ? "var(--bad)" : undefined }}>
+                      {userStats.data.total_errors.toLocaleString()}
+                    </span>
                   </div>
-                  <div style={{ fontSize: 11.5, color: "var(--text2)", fontWeight: 600, marginTop: 2 }}>Errors</div>
-                </div>
+                </Card>
               </div>
-              <div style={{ fontSize: 12, color: "var(--text3)", padding: "0 2px" }}>
+              <div className="hint">
                 {userStats.data.total_sent + userStats.data.total_errors > 0
-                  ? `${((userStats.data.total_sent / (userStats.data.total_sent + userStats.data.total_errors)) * 100).toFixed(1)}% success · `
+                  ? `${((userStats.data.total_sent / (userStats.data.total_sent + userStats.data.total_errors)) * 100).toFixed(1)}% delivered · `
                   : ""}
-                Last activity: {userStats.data.last_activity ? userStats.data.last_activity.slice(0, 16).replace("T", " ") : "never"}
+                Last activity {userStats.data.last_activity ? fmtAgo(parseServerTime(userStats.data.last_activity)) : "never"}
               </div>
 
-              <div style={{ fontSize: 12.5, fontWeight: 800, color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.04em", padding: "6px 2px 0" }}>
-                Per profile
-              </div>
+              <div className="eyebrow">Per profile</div>
               {userStats.data.profiles.length === 0 ? (
-                <div style={{ color: "var(--text3)", fontSize: 13, textAlign: "center", padding: "10px 0" }}>No profiles yet.</div>
+                <div className="hint">No profiles yet.</div>
               ) : (
-                userStats.data.profiles.map((p) => (
-                  <div key={p.id} className="glass-card--soft" style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                    <AvatarBadge seed={p.label} size={32} fontSize={12} />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13.5, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.label}</div>
-                      {p.phone && (
-                        <div className="mono" style={{ fontSize: 11, color: "var(--text3)", marginTop: 1 }}>
-                          {p.phone}
+                <Card flush>
+                  <div className="rows">
+                    {userStats.data.profiles.map((p) => (
+                      <div className="row row--tight" key={p.id}>
+                        <Avatar name={p.label} size={32} />
+                        <div className="row-main">
+                          <div className="row-title">{p.label}</div>
+                          <div className="row-sub">
+                            {p.phone ? `${p.phone} · ` : ""}
+                            {p.last_activity ? fmtAgo(parseServerTime(p.last_activity)) : "no activity yet"}
+                          </div>
                         </div>
-                      )}
-                      <div style={{ fontSize: 11.5, color: "var(--text3)", marginTop: 1 }}>
-                        {p.last_activity ? p.last_activity.slice(0, 16).replace("T", " ") : "no activity yet"}
+                        <div className="mono" style={{ fontSize: 13, fontWeight: 600 }}>
+                          <span style={{ color: "var(--ok)" }}>{p.sent}</span>
+                          {p.errors > 0 && <span style={{ color: "var(--bad)" }}> / {p.errors}</span>}
+                        </div>
                       </div>
-                    </div>
-                    <div style={{ textAlign: "right" }}>
-                      <div className="mono" style={{ fontSize: 13, fontWeight: 800 }}>
-                        <span style={{ color: "var(--ok)" }}>{p.sent}</span>
-                        {p.errors > 0 && <span style={{ color: "var(--bad)" }}> / {p.errors}</span>}
-                      </div>
-                      <div style={{ fontSize: 10, color: "var(--text3)", fontWeight: 700 }}>sent{p.errors > 0 ? " / errors" : ""}</div>
-                    </div>
+                    ))}
                   </div>
-                ))
+                </Card>
               )}
 
-              <div style={{ fontSize: 12.5, fontWeight: 800, color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.04em", padding: "6px 2px 0" }}>
-                Logins
-              </div>
+              <div className="eyebrow">Logins</div>
               {userStats.data.distinct_login_ips_7d > 2 && (
-                <div style={{ background: "var(--bad-soft)", borderRadius: 14, padding: "10px 12px", fontSize: 12.5, color: "var(--bad)", fontWeight: 600 }}>
-                  {userStats.data.distinct_login_ips_7d} different IPs in the last 7 days — worth
-                  checking this account isn't being shared.
-                </div>
+                <Alert tone="bad">
+                  {userStats.data.distinct_login_ips_7d} different IPs in the last 7 days. Worth checking this account isn't being shared.
+                </Alert>
               )}
               {userStats.data.recent_logins.length === 0 ? (
-                <div style={{ color: "var(--text3)", fontSize: 13, textAlign: "center", padding: "10px 0" }}>No login history yet.</div>
+                <div className="hint">No login history yet.</div>
               ) : (
-                userStats.data.recent_logins.map((l, i) => (
-                  <div
-                    key={i}
-                    style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 12.5, padding: "6px 2px", borderTop: i > 0 ? "1px solid var(--hair)" : undefined }}
-                  >
-                    <div style={{ color: l.success ? "var(--text2)" : "var(--bad)", fontWeight: 600 }}>
-                      {l.success ? "✓" : "✗"} {l.stage}
-                      {l.detail ? ` (${l.detail})` : ""}
-                    </div>
-                    <div style={{ color: "var(--text3)", textAlign: "right" }}>
-                      {l.at.slice(0, 16).replace("T", " ")}
-                      {l.ip ? ` · ${l.ip}` : ""}
-                    </div>
+                <Card flush>
+                  <div className="rows">
+                    {userStats.data.recent_logins.map((l, i) => (
+                      <div className="row row--tight" key={i} style={{ minHeight: 40 }}>
+                        <Pill tone={l.success ? "ok" : "bad"}>{l.success ? "OK" : "Failed"}</Pill>
+                        <div className="row-main">
+                          <div className="row-sub" style={{ color: "var(--text-2)" }}>
+                            {l.stage}
+                            {l.detail ? ` (${l.detail})` : ""}
+                          </div>
+                        </div>
+                        <span className="row-time">
+                          {fmtDateTime(parseServerTime(l.at))}
+                          {l.ip ? ` · ${l.ip}` : ""}
+                        </span>
+                      </div>
+                    ))}
                   </div>
-                ))
+                </Card>
               )}
             </>
           ) : (
-            <div style={{ color: "var(--bad)", fontSize: 13, textAlign: "center", padding: "16px 0" }}>Could not load stats.</div>
+            <Alert tone="bad">Could not load stats.</Alert>
           )}
-        </BottomSheet>
+        </Sheet>
       )}
 
       {delayEditUser && (
-        <BottomSheet onClose={() => setDelayEditUser(null)}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <AvatarBadge seed={delayEditUser.email} size={40} fontSize={14} />
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 16, fontWeight: 800, letterSpacing: "-0.02em", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {delayEditUser.email}
-              </div>
-              <div style={{ fontSize: 12, color: "var(--text3)" }}>
+        <Sheet onClose={() => setDelayEditUser(null)}>
+          <div className="cluster" style={{ flexWrap: "nowrap" }}>
+            <Avatar name={delayEditUser.email} size={42} />
+            <div className="grow">
+              <div className="sheet-title truncate" style={{ fontSize: 17 }}>{delayEditUser.email}</div>
+              <div className="faint" style={{ fontSize: 12.5 }}>
                 {delayEditUser.default_delay_seconds !== null
                   ? `Currently overridden at ${delayEditUser.default_delay_seconds}s`
                   : `Currently using the app default (${defaultDelay}s)`}
               </div>
             </div>
           </div>
-          <Slider label="This user's default delay" value={delayEditValue} min={0} max={60} step={1} suffix="s" onChange={setDelayEditValue} />
-          <div style={{ display: "flex", gap: 9 }}>
+          <Slider label="This user's default delay" value={delayEditValue} min={0} max={60} step={1} format={(v) => `${v}s`} onChange={setDelayEditValue} />
+          <div className="btn-row">
             {delayEditUser.default_delay_seconds !== null && (
-              <Button
-                variant="outline"
-                onClick={() => setUserDelay.mutate({ id: delayEditUser.id, value: null })}
-                disabled={setUserDelay.isPending}
-              >
+              <Button className="grow" onClick={() => setUserDelay.mutate({ id: delayEditUser.id, value: null })} disabled={setUserDelay.isPending}>
                 Use app default
               </Button>
             )}
-            <Button
-              variant="secondary"
-              onClick={() => setUserDelay.mutate({ id: delayEditUser.id, value: delayEditValue })}
-              disabled={setUserDelay.isPending}
-            >
+            <Button variant="primary" className="grow" onClick={() => setUserDelay.mutate({ id: delayEditUser.id, value: delayEditValue })} loading={setUserDelay.isPending}>
               {setUserDelay.isPending ? "Saving…" : "Save for this user"}
             </Button>
           </div>
-        </BottomSheet>
+        </Sheet>
       )}
     </div>
   );

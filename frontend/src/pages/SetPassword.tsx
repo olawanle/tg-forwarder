@@ -1,8 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { GlassCard } from "../components/GlassCard";
-import { Field, Input } from "../components/Field";
-import { Button } from "../components/Button";
+import { Alert, Button, Card, Field, Input } from "../components/ui";
+import { BrandMark } from "../routes/Shell";
 import { useAuth } from "../auth/AuthContext";
 import { api, ApiError } from "../api/client";
 
@@ -38,61 +37,34 @@ export function SetPassword() {
   }
 
   return (
-    <div className="page page--no-nav">
-      <div style={{ paddingTop: 24 }}>
-        <div className="page-title">
-          Set a new
-          <br />
-          password
-        </div>
-        <div className="page-subtitle">
-          Your admin created this account with a temporary password. Choose a real one to
-          continue.
-        </div>
-      </div>
-      <form onSubmit={handleSubmit}>
-        <GlassCard premium>
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <Field label="New password">
-              <Input
-                type="password"
-                value={pw}
-                onChange={(e) => setPw(e.target.value)}
-                required
-                autoFocus
-              />
-            </Field>
-            <Field label="Confirm new password">
-              <Input
-                type="password"
-                value={confirm}
-                onChange={(e) => setConfirm(e.target.value)}
-                required
-              />
-            </Field>
-            {error && (
-              <div style={{ color: "var(--bad)", fontSize: 13, fontWeight: 600 }}>{error}</div>
-            )}
-            <Button type="submit" disabled={busy}>
-              {busy ? "Updating…" : "Update password"}
-            </Button>
+    <div className="auth" style={{ gridTemplateColumns: "minmax(0, 1fr)" }}>
+      <div className="auth-form">
+        <div className="auth-card">
+          <BrandMark large />
+          <div>
+            <h1 className="auth-title">Set a new password</h1>
+            <p className="page-sub">Your admin created this account with a temporary password. Choose your own to continue.</p>
           </div>
-        </GlassCard>
-      </form>
-      <div style={{ textAlign: "center", marginTop: 8 }}>
-        <button
-          type="button"
-          onClick={logout}
-          style={{
-            background: "none",
-            border: "none",
-            color: "var(--text3)",
-            fontSize: 13,
-            cursor: "pointer",
-          }}
-        >
-          Log out instead
-        </button>
+          <form onSubmit={handleSubmit}>
+            <Card>
+              <div className="stack">
+                <Field label="New password" hint="At least 8 characters.">
+                  <Input type="password" value={pw} onChange={(e) => setPw(e.target.value)} required autoFocus autoComplete="new-password" />
+                </Field>
+                <Field label="Confirm new password">
+                  <Input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} required autoComplete="new-password" />
+                </Field>
+                {error && <Alert tone="bad">{error}</Alert>}
+                <Button type="submit" variant="primary" size="lg" block loading={busy}>
+                  {busy ? "Updating…" : "Update password"}
+                </Button>
+              </div>
+            </Card>
+          </form>
+          <button type="button" className="link" style={{ alignSelf: "center", color: "var(--text-3)" }} onClick={logout}>
+            Log out instead
+          </button>
+        </div>
       </div>
     </div>
   );

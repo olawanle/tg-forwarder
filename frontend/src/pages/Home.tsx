@@ -1,378 +1,213 @@
 import { Link, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { GlassCard } from "../components/GlassCard";
-import { GlassHero } from "../components/GlassHero";
-import { AvatarBadge, StatusPill, toneForStatus } from "../components/Small";
-import { MiniProgressRing } from "../components/ProgressRing";
-import { TrendChart } from "../components/TrendChart";
+import { Icon } from "../components/Icon";
+import { Avatar, Card, CardHead, Empty, PageHead, Pill, ResultPill, Ring, Skeleton, SkeletonRows, jobStatus } from "../components/ui";
+import { TrendChart, buildDailySeries, useTrend } from "../components/TrendChart";
 import { useAuth } from "../auth/AuthContext";
 import { useProfiles } from "../profile/ProfileContext";
 import { api } from "../api/client";
 import type { Job, SendLogEntry, Skip } from "../api/types";
+import { jobCounts, useEta, useLiveJob, useNow, type LiveEta } from "../lib/jobs";
+import { fmtAgo, fmtDuration, fmtFinish, parseServerTime } from "../lib/time";
 
-const ACTIVE_STATUSES = new Set(["queued", "running"]);
+function greeting(): string {
+  const h = new Date().getHours();
+  return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
+}
+
+function LiveCard({ job, running, eta }: { job: Job | null; running: boolean; eta: LiveEta | null }) {
+  const navigate = useNavigate();
+  if (!job) {
+    return (
+      <Card>
+        <Empty icon="send" title="No broadcasts yet" action={<Link to="/compose" className="btn btn--primary">Write your first broadcast</Link>}>
+          One message, sent to every group this account is in. Its progress will show up here.
+        </Empty>
+      </Card>
+    );
+  }
+  const { done, total, fraction } = jobCounts(job);
+  const status = jobStatus(job.status);
+  return (
+    <div className={`card card--hero card--link ${running ? "" : "is-idle"}`} onClick={() => navigate("/progress")} role="link" tabIndex={0} onKeyDown={(e) => e.key === "Enter" && navigate("/progress")}>
+      <div className="live">
+        <Ring fraction={fraction} size={92} thickness={8} live={running}>
+          <div className="ring-pct" style={{ fontSize: 22 }}>
+            {Math.round(fraction * 100)}
+            <small>%</small>
+          </div>
+        </Ring>
+        <div className="live-body">
+          <div className={`live-status ${running ? "is-live" : ""}`}>
+            {running && <span className="dot dot--live" />}
+            {running ? status.label : `Last broadcast · ${status.label}`}
+          </div>
+          <div className="live-title">
+            <span className="num">{done}</span> of <span className="num">{total || "?"}</span> groups
+          </div>
+          <div className="live-now truncate">
+            {running ? `Now: ${job.current_name || "getting ready"}` : `Job #${job.id}${job.elapsed_seconds != null ? ` · took ${fmtDuration(job.elapsed_seconds)}` : ""}`}
+          </div>
+          <div className="live-chips">
+            <Pill mono>{job.delay_seconds}s delay</Pill>
+            {eta && (
+              <>
+                <Pill tone={eta.holding ? "warn" : "accent"} mono>
+                  ~{fmtDuration(eta.secondsLeft)} left
+                </Pill>
+                <Pill mono>done by {fmtFinish(eta.finishAt)}</Pill>
+              </>
+            )}
+          </div>
+        </div>
+        <Icon name="chevronRight" size={18} className="faint" />
+      </div>
+    </div>
+  );
+}
+
+function StatTile({ label, value, tone, foot }: { label: string; value: number | undefined; tone?: string; foot?: string }) {
+  return (
+    <Card tight>
+      <div className="stat">
+        <span className="eyebrow">{label}</span>
+        {value === undefined ? <Skeleton width={56} height={28} /> : <span className="stat-value" style={{ color: tone }}>{value.toLocaleString()}</span>}
+        {foot && <span className="stat-foot">{foot}</span>}
+      </div>
+    </Card>
+  );
+}
 
 export function Home() {
-  const { user, logout } = useAuth();
-  const navigate = useNavigate();
-  const { profiles, activeProfile, setActiveProfileId, isLoading } = useProfiles();
+  const { user } = useAuth();
+  const { profiles, activeProfile, isLoading } = useProfiles();
   const profileId = activeProfile?.id;
 
-  const activeJob = useQuery({
-    queryKey: ["active-job", profileId],
-    queryFn: () => api.get<Job | null>(`/profiles/${profileId}/jobs/active`),
-    enabled: !!profileId,
-    refetchInterval: (q) => (q.state.data && ACTIVE_STATUSES.has(q.state.data.status) ? 3000 : false),
-  });
-
-  // /jobs/active only returns queued|running jobs — once a broadcast
-  // finishes it goes null there, so fall back to the last job (same
-  // pattern Progress.tsx uses) instead of the card just disappearing.
-  const latestJob = useQuery({
-    queryKey: ["latest-job", profileId],
-    queryFn: () => api.get<Job | null>(`/profiles/${profileId}/jobs/latest`),
-    enabled: !!profileId && activeJob.data === null,
-  });
+  const { job, running, fetchedAt } = useLiveJob(profileId);
+  const eta = useEta(job, fetchedAt);
+  const now = useNow(30_000);
 
   const skips = useQuery({
     queryKey: ["skips", profileId],
     queryFn: () => api.get<Skip[]>(`/profiles/${profileId}/skips`),
     enabled: !!profileId,
   });
-
   const discordSelection = useQuery({
     queryKey: ["discord-selection", profileId],
     queryFn: () => api.get<string[]>(`/profiles/${profileId}/discord-selection`),
     enabled: !!profileId,
   });
-
   const recent = useQuery({
     queryKey: ["send-log", profileId],
     queryFn: () => api.get<SendLogEntry[]>(`/profiles/${profileId}/send-log`),
     enabled: !!profileId,
   });
+  const week = useTrend(profileId, 7);
+  const today = week.data ? buildDailySeries(week.data, 1)[0] : undefined;
 
-  const job = activeJob.data ?? latestJob.data ?? null;
-  const isRunning = !!job && ACTIVE_STATUSES.has(job.status);
-  const doneDisplay = job ? Math.min(job.done, job.total || job.done) : 0;
-  const fraction = job?.total ? doneDisplay / job.total : 0;
-  const firstName = user?.email.split("@")[0] ?? "there";
-  const draftPreview =
-    activeProfile?.draft_mode === "saved"
-      ? "Using a tagged Saved Message"
-      : activeProfile?.draft_message || "No draft yet — write one in Compose.";
+  const firstName = (user?.email.split("@")[0] ?? "there").split(/[._-]/)[0];
+  const name = firstName.charAt(0).toUpperCase() + firstName.slice(1);
 
   if (isLoading) {
     return (
       <div className="page">
-        <GlassCard>Loading…</GlassCard>
+        <Skeleton width={220} height={30} />
+        <Card flush>
+          <SkeletonRows count={4} />
+        </Card>
       </div>
     );
   }
 
   if (profiles.length === 0) {
     return (
-      <div className="page">
-        <h1 className="page-title">Dashboard</h1>
-        <GlassCard>
-          No Telegram profiles yet.{" "}
-          <Link to="/profiles" style={{ fontWeight: 700 }}>
-            Add one
-          </Link>{" "}
-          to get started.
-        </GlassCard>
+      <div className="page page--narrow">
+        <PageHead title={`Welcome, ${name}`} sub="Connect a Telegram account to get started." />
+        <Card>
+          <Empty icon="users" title="No Telegram profile yet" action={<Link to="/profiles" className="btn btn--primary">Add a profile</Link>}>
+            A profile is one Telegram account. Broadcasts go out from it to every group it is in.
+          </Empty>
+        </Card>
       </div>
     );
   }
 
+  const variants = activeProfile?.draft_messages.length ?? 0;
+  const savedCount = activeProfile?.draft_saved_message_ids.length ?? 0;
+  const draft =
+    activeProfile?.draft_mode === "saved"
+      ? `Using ${savedCount || 1} tagged Saved Message${savedCount > 1 ? "s" : ""} from Telegram.`
+      : activeProfile?.draft_messages[0] || activeProfile?.draft_message || "";
+
   return (
-    <>
-      {/* ---------------- Mobile: card stack, below 900px ---------------- */}
-      <div className="page home-mobile">
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div>
-            <div style={{ fontSize: 13, color: "var(--text2)", fontWeight: 600 }}>{user?.email}</div>
-            <h1 className="page-title">Dashboard</h1>
-          </div>
-          <Link
-            to="/profiles"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              padding: "5px 12px 5px 5px",
-              borderRadius: 999,
-              background: "var(--glass)",
-              border: "1px solid var(--stroke)",
-              boxShadow: "var(--shadow)",
-            }}
-          >
-            <AvatarBadge seed={activeProfile?.label || "?"} size={30} fontSize={12.5} />
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text2)" strokeWidth={2.6} strokeLinecap="round" strokeLinejoin="round">
-              <path d="m6 9 6 6 6-6" />
-            </svg>
+    <div className="page">
+      <PageHead
+        title={`${greeting()}, ${name}`}
+        sub={
+          <>
+            {activeProfile?.label}
+            {activeProfile?.phone ? ` · ${activeProfile.phone}` : ""}
+          </>
+        }
+        actions={
+          <Link to="/compose" className="btn btn--primary only-desktop">
+            <Icon name="send" size={17} />
+            New broadcast
           </Link>
-        </div>
+        }
+      />
 
-        {job && (
-          <GlassHero style={{ cursor: "pointer" }}>
-            <div onClick={() => navigate("/progress")} style={{ display: "flex", alignItems: "center", gap: 16 }}>
-              <MiniProgressRing fraction={fraction} />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-                  {isRunning && (
-                    <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--ok)", animation: "glassPulse 1.8s ease-in-out infinite" }} />
-                  )}
-                  <span style={{ fontSize: 13, fontWeight: 700, color: isRunning ? "var(--ok)" : "var(--text2)", textTransform: "capitalize" }}>
-                    {isRunning ? job.status : `Last broadcast · ${job.status}`}
-                  </span>
-                </div>
-                <div style={{ fontSize: 17, fontWeight: 800, letterSpacing: "-0.02em", marginTop: 3 }}>
-                  Job #{job.id} · {doneDisplay} of {job.total || "?"}
-                </div>
-                <div style={{ fontSize: 12.5, color: "var(--text2)", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  Now: {job.current_name || "—"}
-                </div>
-              </div>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
-                <path d="m9 18 6-6-6-6" />
-              </svg>
+      <div className="grid grid--main">
+        <LiveCard job={job} running={running} eta={eta} />
+        <Card>
+          <CardHead title="Draft" end={<Link to="/compose" className="link">Edit</Link>} />
+          <div className="hint" style={{ whiteSpace: "pre-wrap", color: draft ? "var(--text-2)" : undefined, fontSize: 13.5, display: "-webkit-box", WebkitLineClamp: 4, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+            {draft || "Nothing drafted yet. Write the message you want every group to get."}
+          </div>
+          <div className="spread" style={{ marginTop: 14 }}>
+            <div className="cluster">
+              {activeProfile?.draft_mode !== "saved" && variants > 1 && <Pill mono>{variants} variants</Pill>}
+              {!activeProfile?.has_session && <Pill tone="bad" dot>No session</Pill>}
             </div>
-          </GlassHero>
-        )}
-
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-          <div className="glass-card--soft" style={{ border: "1px solid var(--stroke)" }}>
-            <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.03em", color: "var(--warn)" }}>{skips.data?.length ?? "—"}</div>
-            <div style={{ fontSize: 11.5, color: "var(--text2)", fontWeight: 600, marginTop: 2 }}>Blacklisted</div>
+            <Link to="/compose" className="btn btn--sm">
+              Open Compose
+              <Icon name="arrowRight" size={15} />
+            </Link>
           </div>
-          <div className="glass-card--soft" style={{ border: "1px solid var(--stroke)" }}>
-            <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.03em" }}>{discordSelection.data?.length ?? "—"}</div>
-            <div style={{ fontSize: 11.5, color: "var(--text2)", fontWeight: 600, marginTop: 2 }}>Discord channels</div>
-          </div>
-        </div>
+        </Card>
+      </div>
 
+      <div className="grid grid--stats">
+        <StatTile label="Sent today" value={week.isLoading ? undefined : (today?.sent ?? 0)} tone="var(--ok)" />
+        <StatTile label="Errors today" value={week.isLoading ? undefined : (today?.errors ?? 0)} tone={(today?.errors ?? 0) > 0 ? "var(--bad)" : undefined} />
+        <StatTile label="Blacklisted" value={skips.data?.length} tone={(skips.data?.length ?? 0) > 0 ? "var(--warn)" : undefined} />
+        <StatTile label="Discord channels" value={discordSelection.data?.length} />
+      </div>
+
+      <div className="grid grid--main">
         <TrendChart profileId={profileId} />
-
-        <GlassCard>
-          <div style={{ display: "flex", flexDirection: "column", gap: 13 }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <span style={{ fontSize: 15, fontWeight: 800, letterSpacing: "-0.02em" }}>Quick broadcast</span>
-              <Link to="/compose" style={{ fontSize: 12.5, fontWeight: 700 }}>
-                Edit
-              </Link>
-            </div>
-            <div style={{ background: "var(--field)", boxShadow: "var(--field-in)", borderRadius: 18, padding: "13px 14px", fontSize: 13.5, lineHeight: 1.5, color: "var(--text2)", minHeight: 20 }}>
-              {draftPreview}
-            </div>
-            <button type="button" onClick={() => navigate("/compose")} className="pill-btn pill-btn--secondary">
-              Go to Compose
-            </button>
-          </div>
-        </GlassCard>
-
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 4px" }}>
-          <span style={{ fontSize: 15, fontWeight: 800, letterSpacing: "-0.02em" }}>Recent</span>
-          <Link to="/log" style={{ fontSize: 12.5, fontWeight: 700 }}>
-            See all
-          </Link>
-        </div>
-        <GlassCard>
-          <div style={{ display: "flex", flexDirection: "column" }}>
-            {(recent.data ?? []).length === 0 && (
-              <div style={{ color: "var(--text3)", fontSize: 13, textAlign: "center", padding: "12px 0" }}>No sends yet.</div>
-            )}
-            {(recent.data ?? []).slice(0, 4).map((r, i) => (
-              <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "13px 4px", borderTop: i === 0 ? "none" : "1px solid var(--hair)" }}>
-                <AvatarBadge seed={r.target_name} size={36} fontSize={13} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 14, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.target_name}</div>
-                  <div style={{ fontSize: 12, color: "var(--text3)", marginTop: 1 }}>{r.created_at.slice(0, 16).replace("T", " ")}</div>
+        <Card flush>
+          <CardHead pad title="Recent activity" end={<Link to="/log" className="link">View all</Link>} />
+          {recent.isLoading ? (
+            <SkeletonRows count={5} />
+          ) : (recent.data ?? []).length === 0 ? (
+            <Empty icon="list" title="No sends yet" />
+          ) : (
+            <div className="rows">
+              {(recent.data ?? []).slice(0, 6).map((r) => (
+                <div className="row row--tight" key={r.id}>
+                  <Avatar name={r.target_name} size={32} />
+                  <div className="row-main">
+                    <div className="row-title">{r.target_name}</div>
+                    <div className="row-sub">{fmtAgo(parseServerTime(r.created_at), now)}</div>
+                  </div>
+                  <ResultPill status={r.status} />
                 </div>
-                <StatusPill label={r.status} tone={toneForStatus(r.status)} />
-              </div>
-            ))}
-          </div>
-        </GlassCard>
-
-        {profiles.length > 1 && (
-          <GlassCard>
-            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10 }}>Switch profile</div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {profiles.map((p) => (
-                <button
-                  key={p.id}
-                  type="button"
-                  onClick={() => setActiveProfileId(p.id)}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 10,
-                    padding: "10px 12px",
-                    borderRadius: 16,
-                    border: p.id === activeProfile?.id ? "1.5px solid var(--accent)" : "1px solid var(--stroke)",
-                    background: "var(--field)",
-                    cursor: "pointer",
-                    textAlign: "left",
-                    font: "inherit",
-                    color: "var(--text)",
-                  }}
-                >
-                  <AvatarBadge seed={p.label} size={30} fontSize={11.5} />
-                  <span style={{ fontWeight: 700, fontSize: 13.5 }}>{p.label}</span>
-                </button>
               ))}
             </div>
-          </GlassCard>
-        )}
-
-        <button type="button" onClick={logout} style={{ textAlign: "center", fontSize: 13.5, fontWeight: 700, color: "var(--bad)", padding: 10, cursor: "pointer", background: "none", border: "none" }}>
-          Log out
-        </button>
+          )}
+        </Card>
       </div>
-
-      {/* ---------------- Desktop: sidebar-fed dashboard grid, 900px+ ---------------- */}
-      <div className="home-desktop">
-        <div className="d-topbar">
-          <div>
-            <h1>Hey, {firstName}</h1>
-            <p>Here's what {activeProfile?.label ?? "this profile"} has been up to.</p>
-          </div>
-          <button type="button" onClick={() => navigate("/compose")} className="pill-btn pill-btn--sm" style={{ width: "auto", padding: "0 22px" }}>
-            Start broadcast
-          </button>
-        </div>
-
-        <div className="d-grid">
-          <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
-            {job && (
-              <GlassHero style={{ cursor: "pointer" }}>
-                <div onClick={() => navigate("/progress")} style={{ display: "flex", alignItems: "center", gap: 16 }}>
-                  <MiniProgressRing fraction={fraction} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-                      <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--ok)", animation: "glassPulse 1.8s ease-in-out infinite" }} />
-                      <span style={{ fontSize: 13, fontWeight: 700, color: "var(--ok)", textTransform: "capitalize" }}>{job.status}</span>
-                    </div>
-                    <div style={{ fontSize: 17, fontWeight: 800, letterSpacing: "-0.02em", marginTop: 3 }}>
-                      Job #{job.id} · {doneDisplay} of {job.total || "?"}
-                    </div>
-                    <div style={{ fontSize: 12.5, color: "var(--text2)", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      Now: {job.current_name || "—"}
-                    </div>
-                  </div>
-                </div>
-              </GlassHero>
-            )}
-
-            <div className="d-stats-row">
-              <GlassCard>
-                <div className="gradient-text" style={{ fontSize: 10.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                  Active job
-                </div>
-                <div className="hero-num mono" style={{ fontSize: 30, marginTop: 4 }}>
-                  {job ? `${doneDisplay}/${job.total || "?"}` : "—"}
-                </div>
-              </GlassCard>
-              <GlassCard>
-                <div style={{ fontSize: 10.5, fontWeight: 800, color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Blacklisted</div>
-                <div className="mono" style={{ fontSize: 30, fontWeight: 800, letterSpacing: "-0.02em", marginTop: 4, color: "var(--warn)" }}>
-                  {skips.data?.length ?? "—"}
-                </div>
-              </GlassCard>
-              <GlassCard>
-                <div style={{ fontSize: 10.5, fontWeight: 800, color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Discord channels</div>
-                <div className="mono" style={{ fontSize: 30, fontWeight: 800, letterSpacing: "-0.02em", marginTop: 4 }}>
-                  {discordSelection.data?.length ?? "—"}
-                </div>
-              </GlassCard>
-            </div>
-
-            <TrendChart profileId={profileId} />
-
-            <GlassCard>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-                <div style={{ fontSize: 13, fontWeight: 800 }}>Recent activity</div>
-                <Link to="/log" style={{ fontSize: 11.5, fontWeight: 700 }}>
-                  View all →
-                </Link>
-              </div>
-              {(recent.data ?? []).length === 0 ? (
-                <div style={{ color: "var(--text3)", fontSize: 13, textAlign: "center", padding: "16px 0" }}>No sends yet.</div>
-              ) : (
-                <table className="queue-table">
-                  <thead>
-                    <tr>
-                      <th>Target</th>
-                      <th>Status</th>
-                      <th style={{ textAlign: "right" }}>Time</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(recent.data ?? []).slice(0, 6).map((r) => (
-                      <tr key={r.id}>
-                        <td style={{ display: "flex", alignItems: "center", gap: 9 }}>
-                          <AvatarBadge seed={r.target_name} size={24} fontSize={9.5} />
-                          {r.target_name}
-                        </td>
-                        <td>
-                          <StatusPill label={r.status} tone={toneForStatus(r.status)} />
-                        </td>
-                        <td className="mono" style={{ textAlign: "right" }}>
-                          {r.created_at.slice(11, 16)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </GlassCard>
-          </div>
-
-          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            <GlassCard style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              <div style={{ fontSize: 13, fontWeight: 800 }}>Quick broadcast</div>
-              <div style={{ background: "var(--field)", boxShadow: "var(--field-in)", borderRadius: 15, padding: "12px 13px", fontSize: 13, lineHeight: 1.5, color: "var(--text2)", minHeight: 60 }}>
-                {draftPreview}
-              </div>
-              <button type="button" onClick={() => navigate("/compose")} className="pill-btn">
-                Go to Compose
-              </button>
-            </GlassCard>
-
-            {profiles.length > 1 && (
-              <GlassCard>
-                <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 10 }}>Switch profile</div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  {profiles.map((p) => (
-                    <button
-                      key={p.id}
-                      type="button"
-                      onClick={() => setActiveProfileId(p.id)}
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 10,
-                        padding: "10px 12px",
-                        borderRadius: 14,
-                        border: p.id === activeProfile?.id ? "1.5px solid var(--accent)" : "1px solid var(--stroke)",
-                        background: "var(--field)",
-                        cursor: "pointer",
-                        textAlign: "left",
-                        font: "inherit",
-                        color: "var(--text)",
-                      }}
-                    >
-                      <AvatarBadge seed={p.label} size={28} fontSize={11} />
-                      <span style={{ fontWeight: 700, fontSize: 13 }}>{p.label}</span>
-                    </button>
-                  ))}
-                </div>
-              </GlassCard>
-            )}
-          </div>
-        </div>
-      </div>
-    </>
+    </div>
   );
 }

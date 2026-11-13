@@ -1,12 +1,14 @@
 import { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { GlassCard } from "../components/GlassCard";
-import { AvatarBadge, StatusPill, toneForStatus } from "../components/Small";
+import { Avatar, Card, Empty, PageHead, ResultPill, SkeletonRows } from "../components/ui";
 import { useProfiles } from "../profile/ProfileContext";
 import { api } from "../api/client";
 import type { SendLogEntry } from "../api/types";
+import { dayKey, fmtClock, fmtDay, parseServerTime } from "../lib/time";
 
 type Filter = "All" | "Telegram" | "Discord" | "Errors";
+const FILTERS: Filter[] = ["All", "Telegram", "Discord", "Errors"];
 
 export function Log() {
   const { activeProfile } = useProfiles();
@@ -27,103 +29,73 @@ export function Log() {
     return rows.filter((r) => r.status === "error");
   }, [rows, filter]);
 
+  // Grouped by the viewer's own calendar day, not the server's.
   const grouped = useMemo(() => {
-    const groups = new Map<string, SendLogEntry[]>();
-    for (const r of filtered) {
-      const day = r.created_at.slice(0, 10);
-      if (!groups.has(day)) groups.set(day, []);
-      groups.get(day)!.push(r);
+    const groups = new Map<string, { date: Date; entries: { row: SendLogEntry; at: Date | null }[] }>();
+    for (const row of filtered) {
+      const at = parseServerTime(row.created_at);
+      const key = at ? dayKey(at) : "unknown";
+      if (!groups.has(key)) groups.set(key, { date: at ?? new Date(0), entries: [] });
+      groups.get(key)!.entries.push({ row, at });
     }
     return Array.from(groups.entries());
   }, [filtered]);
 
   if (!activeProfile) {
     return (
-      <div className="page">
-        <h1 className="page-title">Send log</h1>
-        <GlassCard>Add a Telegram profile first.</GlassCard>
+      <div className="page page--narrow">
+        <PageHead title="Send log" />
+        <Card>
+          <Empty icon="users" title="No Telegram profile yet" action={<Link to="/profiles" className="btn btn--primary">Add a profile</Link>} />
+        </Card>
       </div>
     );
   }
 
   return (
-    <div className="page">
-      <div>
-        <h1 className="page-title">Send log</h1>
-        <div className="page-subtitle">Everything this profile has sent.</div>
-      </div>
+    <div className="page page--narrow">
+      <PageHead title="Send log" sub={`The latest sends from ${activeProfile.label}.`} />
 
-      <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
-        {(["All", "Telegram", "Discord", "Errors"] as Filter[]).map((f) => (
-          <button
-            key={f}
-            type="button"
-            onClick={() => setFilter(f)}
-            style={{
-              padding: "8px 14px",
-              borderRadius: 999,
-              fontSize: 12.5,
-              fontWeight: 700,
-              cursor: "pointer",
-              background: f === filter ? "var(--glass-3)" : "var(--glass-2)",
-              color: f === filter ? "var(--text)" : "var(--text3)",
-              border: "1px solid var(--stroke)",
-              boxShadow: f === filter ? "var(--shadow)" : "none",
-              fontFamily: "inherit",
-            }}
-          >
+      <div className="chips">
+        {FILTERS.map((f) => (
+          <button key={f} type="button" className="chip" aria-pressed={f === filter} onClick={() => setFilter(f)}>
             {f}
           </button>
         ))}
       </div>
 
       {isLoading ? (
-        <GlassCard>Loading…</GlassCard>
+        <Card flush>
+          <SkeletonRows count={6} />
+        </Card>
       ) : grouped.length === 0 ? (
-        <GlassCard>No sends yet.</GlassCard>
+        <Card>
+          <Empty icon="list" title={filter === "All" ? "No sends yet" : `No ${filter.toLowerCase()} in the log`}>
+            {filter === "All" ? "Every message a broadcast sends is recorded here." : "Try another filter."}
+          </Empty>
+        </Card>
       ) : (
-        grouped.map(([day, entries]) => (
-          <div key={day} style={{ display: "flex", flexDirection: "column", gap: 9 }}>
-            <div
-              style={{
-                fontSize: 12,
-                fontWeight: 800,
-                color: "var(--text3)",
-                letterSpacing: "0.05em",
-                textTransform: "uppercase",
-                padding: "4px 4px 0",
-              }}
-            >
-              {day}
-            </div>
-            <GlassCard>
-              <div style={{ display: "flex", flexDirection: "column" }}>
-                {entries.map((r, i) => (
-                  <div
-                    key={r.id}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 11,
-                      padding: "12px 4px",
-                      borderTop: i === 0 ? "none" : "1px solid var(--hair)",
-                    }}
-                  >
-                    <AvatarBadge seed={r.target_name} size={32} fontSize={12} />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13.5, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {r.target_name}
-                      </div>
-                      <div style={{ fontSize: 11.5, color: "var(--text3)", marginTop: 1 }}>
-                        {r.created_at.slice(11, 16)} · {r.platform}
+        grouped.map(([key, group]) => (
+          <section key={key}>
+            <div className="eyebrow day-label">{fmtDay(group.date)}</div>
+            <Card flush>
+              <div className="rows">
+                {group.entries.map(({ row, at }) => (
+                  <div className="row row--tight" key={row.id}>
+                    <Avatar name={row.target_name} size={32} />
+                    <div className="row-main">
+                      <div className="row-title">{row.target_name}</div>
+                      <div className="row-sub">
+                        {fmtClock(at)} · <span style={{ textTransform: "capitalize" }}>{row.platform}</span>
+                        {row.detail && row.status !== "ok" ? ` · ${row.detail}` : ""}
                       </div>
                     </div>
-                    <StatusPill label={r.status} tone={toneForStatus(r.status)} />
+                    <ResultPill status={row.status} />
                   </div>
                 ))}
               </div>
-            </GlassCard>
-          </div>
+            </Card>
+          </section>
         ))
       )}
     </div>

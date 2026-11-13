@@ -1,100 +1,115 @@
-import { useId, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api/client";
 import type { TrendPoint } from "../api/types";
+import { Card, CardHead, Empty, Skeleton, Tabs } from "./ui";
 
-function buildDailySeries(points: TrendPoint[], days: number) {
+/** The server buckets by UTC day, so the series is keyed the same way. */
+function utcKey(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+export function buildDailySeries(points: TrendPoint[], days: number): TrendPoint[] {
   const byDay = new Map(points.map((p) => [p.day, p]));
   const out: TrendPoint[] = [];
   const today = new Date();
   for (let i = days - 1; i >= 0; i--) {
     const d = new Date(today);
-    d.setDate(d.getDate() - i);
-    const key = d.toISOString().slice(0, 10);
+    d.setUTCDate(d.getUTCDate() - i);
+    const key = utcKey(d);
     const found = byDay.get(key);
     out.push({ day: key, sent: found?.sent ?? 0, errors: found?.errors ?? 0, total: found?.total ?? 0 });
   }
   return out;
 }
 
-export function TrendChart({ profileId }: { profileId: number | undefined }) {
-  const [days, setDays] = useState<7 | 30>(7);
-  const gradId = useId();
-
-  const trend = useQuery({
+export function useTrend(profileId: number | undefined, days: number) {
+  return useQuery({
     queryKey: ["trend", profileId, days],
     queryFn: () => api.get<TrendPoint[]>(`/profiles/${profileId}/stats/trend?days=${days}`),
     enabled: !!profileId,
   });
+}
 
-  const points = trend.data ?? [];
-  const totalSent = points.reduce((s, p) => s + p.sent, 0);
-  const totalErrors = points.reduce((s, p) => s + p.errors, 0);
-  const successRate = totalSent + totalErrors > 0 ? (totalSent / (totalSent + totalErrors)) * 100 : 0;
+const weekday = new Intl.DateTimeFormat(undefined, { weekday: "short", timeZone: "UTC" });
+const monthDay = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
 
-  const series = useMemo(() => buildDailySeries(points, days), [points, days]);
-  const max = Math.max(1, ...series.map((s) => s.sent));
+export function TrendChart({ profileId }: { profileId: number | undefined }) {
+  const [days, setDays] = useState<"7" | "30">("7");
+  const n = Number(days);
+  const trend = useTrend(profileId, n);
 
-  const w = 100;
-  const h = 36;
-  const stepX = series.length > 1 ? w / (series.length - 1) : w;
-  const coords = series.map((s, i) => ({ x: i * stepX, y: h - (s.sent / max) * (h - 4) - 2 }));
-  const linePath = coords.map((c, i) => `${i === 0 ? "M" : "L"} ${c.x.toFixed(2)} ${c.y.toFixed(2)}`).join(" ");
-  const areaPath = `${linePath} L ${w} ${h} L 0 ${h} Z`;
-  const hasData = points.length > 0;
+  const series = useMemo(() => buildDailySeries(trend.data ?? [], n), [trend.data, n]);
+  const sent = series.reduce((s, p) => s + p.sent, 0);
+  const errors = series.reduce((s, p) => s + p.errors, 0);
+  const max = Math.max(1, ...series.map((p) => p.sent + p.errors));
+  const rate = sent + errors > 0 ? (sent / (sent + errors)) * 100 : null;
 
   return (
-    <div className="glass-card" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-        <div>
-          <div style={{ fontSize: 13, fontWeight: 800 }}>Send trend</div>
-          <div style={{ fontSize: 11, color: "var(--text3)", marginTop: 2 }}>
-            <span className="mono">{totalSent}</span> sent · <span className="mono">{successRate.toFixed(1)}%</span> success ·{" "}
-            last {days}d
-          </div>
-        </div>
-        <div style={{ display: "flex", gap: 4, padding: 3, borderRadius: 999, background: "var(--glass-2)", border: "1px solid var(--stroke)" }}>
-          {([7, 30] as const).map((d) => (
-            <button
-              key={d}
-              type="button"
-              onClick={() => setDays(d)}
-              style={{
-                fontSize: 11,
-                fontWeight: 700,
-                padding: "5px 10px",
-                borderRadius: 999,
-                border: "none",
-                cursor: "pointer",
-                fontFamily: "inherit",
-                background: days === d ? "var(--accent-grad)" : "transparent",
-                color: days === d ? "#fff" : "var(--text3)",
-              }}
-            >
-              {d}d
-            </button>
-          ))}
-        </div>
-      </div>
-
+    <Card>
+      <CardHead
+        title="Activity"
+        sub={
+          <>
+            <span className="mono">{sent.toLocaleString()}</span> sent
+            {rate !== null && (
+              <>
+                {" · "}
+                <span className="mono">{rate.toFixed(1)}%</span> delivered
+              </>
+            )}
+          </>
+        }
+        end={
+          <Tabs
+            inline
+            value={days}
+            onChange={setDays}
+            options={[
+              { value: "7", label: "7 days" },
+              { value: "30", label: "30 days" },
+            ]}
+          />
+        }
+      />
       {trend.isLoading ? (
-        <div style={{ height: 48 }} />
-      ) : !hasData ? (
-        <div style={{ fontSize: 12, color: "var(--text3)", textAlign: "center", padding: "8px 0" }}>
-          No sends in this window yet.
-        </div>
+        <Skeleton height={148} style={{ borderRadius: 12 }} />
+      ) : sent + errors === 0 ? (
+        <Empty icon="chart" title="Nothing sent in this window">
+          Your daily totals will show up here.
+        </Empty>
       ) : (
-        <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" style={{ width: "100%", height: 56, display: "block", overflow: "visible" }}>
-          <defs>
-            <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.35" />
-              <stop offset="100%" stopColor="var(--accent)" stopOpacity="0" />
-            </linearGradient>
-          </defs>
-          <path d={areaPath} fill={`url(#${gradId})`} stroke="none" />
-          <path d={linePath} fill="none" stroke="var(--accent)" strokeWidth="1.6" vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round" />
-        </svg>
+        <>
+          <div className="chart" style={{ gap: n > 7 ? 3 : 10 }}>
+            {series.map((p, i) => {
+              const total = p.sent + p.errors;
+              const d = new Date(`${p.day}T00:00:00Z`);
+              const showLabel = n === 7 || i % 5 === 4 || i === series.length - 1;
+              return (
+                <div className="chart-col" key={p.day}>
+                  <div className="chart-tip">
+                    <b>{monthDay.format(d)}</b> · {p.sent} sent{p.errors ? ` · ${p.errors} errors` : ""}
+                  </div>
+                  <div className={`chart-bar ${total === 0 ? "is-empty" : ""}`} style={{ height: `${(total / max) * 100}%` }}>
+                    {p.errors > 0 && <i style={{ height: `${Math.max((p.errors / total) * 100, 4)}%` }} />}
+                  </div>
+                  <div className="chart-x">{showLabel ? (n === 7 ? weekday.format(d) : d.getUTCDate()) : ""}</div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="legend" style={{ marginTop: 12 }}>
+            <span>
+              <i style={{ background: "var(--accent)" }} />
+              Sent
+            </span>
+            <span>
+              <i style={{ background: "var(--bad)" }} />
+              Errors
+            </span>
+          </div>
+        </>
       )}
-    </div>
+    </Card>
   );
 }

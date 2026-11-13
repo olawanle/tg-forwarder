@@ -1,21 +1,14 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { GlassCard } from "../components/GlassCard";
-import { BottomSheet } from "../components/BottomSheet";
-import { AvatarBadge } from "../components/Small";
-import { IconButton } from "../components/Small";
-import { Button } from "../components/Button";
-import { useAuth } from "../auth/AuthContext";
+import { Icon } from "../components/Icon";
+import { Alert, Avatar, Button, Card, PageHead, Pill, Sheet, Skeleton } from "../components/ui";
 import { useProfiles } from "../profile/ProfileContext";
 import { AddProfileWizard } from "./AddProfileWizard";
 import { api, ApiError } from "../api/client";
 import type { Profile } from "../api/types";
 
 export function Profiles() {
-  const navigate = useNavigate();
   const qc = useQueryClient();
-  const { logout, user } = useAuth();
   const { profiles, activeProfile, setActiveProfileId, isLoading } = useProfiles();
   const [wizardOpen, setWizardOpen] = useState(false);
   const [reconnectProfile, setReconnectProfile] = useState<Profile | null>(null);
@@ -38,143 +31,84 @@ export function Profiles() {
   }
 
   return (
-    <div className="page page--no-nav">
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
-        <div>
-          <h1 className="page-title">Profiles</h1>
-          <div className="page-subtitle">One profile = one Telegram account.</div>
-        </div>
-        <IconButton ariaLabel="Back" onClick={() => navigate("/home")}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round" strokeLinejoin="round">
-            <path d="M18 6 6 18M6 6l12 12" />
-          </svg>
-        </IconButton>
-      </div>
+    <div className="page">
+      <PageHead
+        title="Profiles"
+        sub="One profile is one Telegram account. Broadcasts go out from whichever one is active."
+        actions={
+          <Button variant="primary" icon="plus" onClick={() => setWizardOpen(true)}>
+            Add profile
+          </Button>
+        }
+      />
 
-      {isLoading ? (
-        <GlassCard>
-          <div style={{ color: "var(--text3)", fontSize: 13.5, textAlign: "center", padding: 12 }}>
-            Loading…
-          </div>
-        </GlassCard>
-      ) : (
-        profiles.map((p) => (
-          <GlassCard key={p.id} onClick={() => setActiveProfileId(p.id)}>
-            <div style={{ display: "flex", alignItems: "center", gap: 13 }}>
-              <AvatarBadge seed={p.label} size={48} fontSize={16} />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 15.5, fontWeight: 800, letterSpacing: "-0.02em" }}>{p.label}</div>
-                {p.phone && (
-                  <div className="mono" style={{ fontSize: 12, color: "var(--text3)", marginTop: 2 }}>
-                    {p.phone}
+      <div className="grid grid--cards">
+        {isLoading &&
+          [0, 1].map((i) => (
+            <Card key={i}>
+              <Skeleton width="60%" height={18} />
+              <Skeleton width="40%" style={{ marginTop: 10 }} />
+              <Skeleton height={34} style={{ marginTop: 22 }} />
+            </Card>
+          ))}
+
+        {profiles.map((p) => {
+          const active = p.id === activeProfile?.id;
+          return (
+            <Card key={p.id} className={`profile-card ${active ? "is-active" : ""}`}>
+              <div className="cluster" style={{ flexWrap: "nowrap", alignItems: "flex-start" }}>
+                <Avatar name={p.label} size={46} />
+                <div className="grow">
+                  <div className="section-title truncate">{p.label}</div>
+                  <div className="mono faint" style={{ fontSize: 12.5, marginTop: 2 }}>
+                    {p.phone || "No number on file"}
                   </div>
-                )}
-                <span
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 5,
-                    marginTop: 7,
-                    padding: "3px 9px",
-                    borderRadius: 999,
-                    background: p.has_session ? "var(--ok-soft)" : "var(--bad-soft)",
-                  }}
-                >
-                  <span
-                    style={{
-                      width: 6,
-                      height: 6,
-                      borderRadius: "50%",
-                      background: p.has_session ? "var(--ok)" : "var(--bad)",
-                    }}
-                  />
-                  <span
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 700,
-                      color: p.has_session ? "var(--ok)" : "var(--bad)",
-                    }}
-                  >
-                    {p.has_session ? "Connected" : "No session"}
-                  </span>
-                </span>
+                </div>
+                {active && <Pill tone="accent">Active</Pill>}
               </div>
-              {p.id === activeProfile?.id && (
-                <span
-                  style={{
-                    width: 24,
-                    height: 24,
-                    borderRadius: "50%",
-                    background: "var(--accent-grad)",
-                    display: "grid",
-                    placeItems: "center",
+              <div className="spread">
+                <Pill tone={p.has_session ? "ok" : "bad"} dot>
+                  {p.has_session ? "Connected" : "No session"}
+                </Pill>
+              </div>
+              <div className="btn-row">
+                {active ? (
+                  <Button size="sm" className="grow" disabled icon="check">
+                    In use
+                  </Button>
+                ) : (
+                  <Button size="sm" variant="primary" className="grow" onClick={() => setActiveProfileId(p.id)}>
+                    Switch to this
+                  </Button>
+                )}
+                <Button size="sm" icon="refresh" onClick={() => setReconnectProfile(p)} disabled={busyId === p.id}>
+                  Reconnect
+                </Button>
+                <Button
+                  size="sm"
+                  variant="danger"
+                  className="btn--icon"
+                  aria-label={`Remove ${p.label}`}
+                  onClick={() => {
+                    setDeleteError("");
+                    setConfirmDelete(p);
                   }}
+                  disabled={busyId === p.id}
                 >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={3.4} strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M20 6 9 17l-5-5" />
-                  </svg>
-                </span>
-              )}
-              <button
-                type="button"
-                aria-label={`Reconnect ${p.label}`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setReconnectProfile(p);
-                }}
-                disabled={busyId === p.id}
-                style={{
-                  width: 34,
-                  height: 34,
-                  borderRadius: 11,
-                  background: "var(--glass-2)",
-                  border: "none",
-                  display: "grid",
-                  placeItems: "center",
-                  cursor: "pointer",
-                  flexShrink: 0,
-                  color: "var(--text2)",
-                }}
-              >
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 12a9 9 0 1 1-2.64-6.36" />
-                  <path d="M21 3v6h-6" />
-                </svg>
-              </button>
-              <button
-                type="button"
-                aria-label={`Remove ${p.label}`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setDeleteError("");
-                  setConfirmDelete(p);
-                }}
-                disabled={busyId === p.id}
-                style={{
-                  width: 34,
-                  height: 34,
-                  borderRadius: 11,
-                  background: "var(--bad-soft)",
-                  border: "none",
-                  display: "grid",
-                  placeItems: "center",
-                  cursor: "pointer",
-                  flexShrink: 0,
-                  color: "var(--bad)",
-                }}
-              >
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m3 0-.8 13.6a2 2 0 0 1-2 1.9H7.8a2 2 0 0 1-2-1.9L5 6" />
-                </svg>
-              </button>
-            </div>
-          </GlassCard>
-        ))
-      )}
+                  <Icon name="trash" size={15} />
+                </Button>
+              </div>
+            </Card>
+          );
+        })}
 
-      <Button variant="outline" onClick={() => setWizardOpen(true)}>
-        + Add a Telegram profile
-      </Button>
+        {!isLoading && (
+          <button type="button" className="card add-card" onClick={() => setWizardOpen(true)}>
+            <Icon name="plus" size={22} />
+            Add a Telegram profile
+          </button>
+        )}
+      </div>
 
       {(wizardOpen || reconnectProfile) && (
         <AddProfileWizard
@@ -192,77 +126,29 @@ export function Profiles() {
       )}
 
       {confirmDelete && (
-        <BottomSheet onClose={() => (busyId ? undefined : setConfirmDelete(null))}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 13 }}>
-              <AvatarBadge seed={confirmDelete.label} size={44} fontSize={15} />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 16, fontWeight: 800, letterSpacing: "-0.02em" }}>
-                  Remove "{confirmDelete.label}"?
-                </div>
-                {confirmDelete.phone && (
-                  <div className="mono" style={{ fontSize: 12, color: "var(--text3)", marginTop: 2 }}>
-                    {confirmDelete.phone}
-                  </div>
-                )}
-              </div>
-            </div>
-            <div style={{ fontSize: 13.5, color: "var(--text2)", lineHeight: 1.55 }}>
-              This deletes its send history, job logs, and blacklist for good. The Telegram
-              account itself isn't touched — you can reconnect it later by adding it again.
-              <br />
-              <strong style={{ color: "var(--bad)" }}>This can't be undone.</strong>
-            </div>
-            {deleteError && <div style={{ color: "var(--bad)", fontSize: 13, fontWeight: 600 }}>{deleteError}</div>}
-            <div style={{ display: "flex", gap: 10 }}>
-              <Button variant="outline" onClick={() => setConfirmDelete(null)} disabled={busyId === confirmDelete.id}>
-                Cancel
-              </Button>
-              <Button variant="danger" onClick={() => removeProfile(confirmDelete)} disabled={busyId === confirmDelete.id}>
-                {busyId === confirmDelete.id ? "Removing…" : "Remove profile"}
-              </Button>
+        <Sheet onClose={() => (busyId ? undefined : setConfirmDelete(null))}>
+          <div className="cluster" style={{ flexWrap: "nowrap" }}>
+            <Avatar name={confirmDelete.label} size={44} />
+            <div className="grow">
+              <div className="sheet-title">Remove "{confirmDelete.label}"?</div>
+              {confirmDelete.phone && <div className="mono faint" style={{ fontSize: 12.5, marginTop: 2 }}>{confirmDelete.phone}</div>}
             </div>
           </div>
-        </BottomSheet>
-      )}
-
-      {user?.role === "admin" && (
-        <GlassCard onClick={() => navigate("/admin")}>
-          <div style={{ display: "flex", alignItems: "center", gap: 13 }}>
-            <span
-              style={{
-                width: 44,
-                height: 44,
-                borderRadius: 15,
-                background: "var(--accent-soft)",
-                display: "grid",
-                placeItems: "center",
-                flexShrink: 0,
-              }}
-            >
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
-                <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-                <circle cx="9" cy="7" r="4" />
-                <path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
-              </svg>
-            </span>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: "-0.02em" }}>Admin</div>
-              <div style={{ fontSize: 12.5, color: "var(--text3)", marginTop: 2 }}>You're the admin</div>
-            </div>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
-              <path d="m9 18 6-6-6-6" />
-            </svg>
+          <div className="sheet-sub" style={{ marginTop: 0 }}>
+            This deletes its send history, job logs and blacklist for good. The Telegram account itself isn't touched, and you
+            can connect it again later. <strong style={{ color: "var(--bad)" }}>This can't be undone.</strong>
           </div>
-        </GlassCard>
+          {deleteError && <Alert tone="bad">{deleteError}</Alert>}
+          <div className="btn-row">
+            <Button className="grow" onClick={() => setConfirmDelete(null)} disabled={busyId === confirmDelete.id}>
+              Keep it
+            </Button>
+            <Button variant="danger" className="grow" onClick={() => removeProfile(confirmDelete)} loading={busyId === confirmDelete.id}>
+              {busyId === confirmDelete.id ? "Removing…" : "Remove profile"}
+            </Button>
+          </div>
+        </Sheet>
       )}
-
-      <div
-        onClick={logout}
-        style={{ textAlign: "center", fontSize: 13.5, fontWeight: 700, color: "var(--bad)", padding: 10, cursor: "pointer" }}
-      >
-        Log out
-      </div>
     </div>
   );
 }

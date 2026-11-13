@@ -1,49 +1,56 @@
 import { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { GlassCard } from "../components/GlassCard";
-import { Button } from "../components/Button";
-import { Input } from "../components/Field";
-import { SegmentedTabs, ToggleSwitch, AvatarBadge } from "../components/Small";
+import { Icon } from "../components/Icon";
+import { Alert, Avatar, Button, Card, Empty, Input, PageHead, Pill, SkeletonRows, Switch, Tabs, resultLabel } from "../components/ui";
 import { useProfiles } from "../profile/ProfileContext";
 import { api, ApiError } from "../api/client";
 import type { DiscordChannel, Group, Skip } from "../api/types";
+import { fmtAgo, parseServerTime } from "../lib/time";
 
 type Tab = "groups" | "blacklist" | "discord";
+/** Rows rendered at once. Accounts can be in thousands of groups; a phone
+ * should not have to lay them all out to show the first screen. */
+const PAGE = 150;
 
 export function Targets() {
   const { activeProfile } = useProfiles();
   const [tab, setTab] = useState<Tab>("groups");
+  const profileId = activeProfile?.id;
+
+  const skips = useQuery({
+    queryKey: ["skips", profileId],
+    queryFn: () => api.get<Skip[]>(`/profiles/${profileId}/skips`),
+    enabled: !!profileId,
+  });
 
   if (!activeProfile) {
     return (
-      <div className="page">
-        <h1 className="page-title">Targets</h1>
-        <GlassCard>Add a Telegram profile first.</GlassCard>
+      <div className="page page--narrow">
+        <PageHead title="Targets" />
+        <Card>
+          <Empty icon="users" title="No Telegram profile yet" action={<Link to="/profiles" className="btn btn--primary">Add a profile</Link>}>
+            Connect a Telegram account to see its groups.
+          </Empty>
+        </Card>
       </div>
     );
   }
 
   return (
-    <div className="page page--wide">
-      <div>
-        <h1 className="page-title">Targets</h1>
-        <div className="page-subtitle">
-          Every group on this profile gets the broadcast. Blacklisted ones are skipped.
-        </div>
-      </div>
-
-      <SegmentedTabs
+    <div className="page">
+      <PageHead title="Targets" sub="Every group this profile is in gets the broadcast. Blacklisted ones are skipped." />
+      <Tabs
         value={tab}
         onChange={setTab}
         options={[
           { value: "groups", label: "Groups" },
-          { value: "blacklist", label: "Blacklist" },
+          { value: "blacklist", label: "Blacklist", count: skips.data?.length },
           { value: "discord", label: "Discord" },
         ]}
       />
-
       {tab === "groups" && <GroupsTab profileId={activeProfile.id} />}
-      {tab === "blacklist" && <BlacklistTab profileId={activeProfile.id} />}
+      {tab === "blacklist" && <BlacklistTab profileId={activeProfile.id} skips={skips.data ?? []} isLoading={skips.isLoading} />}
       {tab === "discord" && <DiscordTab profileId={activeProfile.id} />}
     </div>
   );
@@ -52,6 +59,7 @@ export function Targets() {
 function GroupsTab({ profileId }: { profileId: number }) {
   const [search, setSearch] = useState("");
   const [error, setError] = useState("");
+  const [shown, setShown] = useState(PAGE);
   const query = useQuery({
     queryKey: ["groups", profileId],
     queryFn: () => api.get<Group[]>(`/profiles/${profileId}/groups`),
@@ -64,7 +72,7 @@ function GroupsTab({ profileId }: { profileId: number }) {
     [groups, search],
   );
 
-  async function preview() {
+  async function load() {
     setError("");
     try {
       await query.refetch({ throwOnError: true });
@@ -73,89 +81,85 @@ function GroupsTab({ profileId }: { profileId: number }) {
     }
   }
 
+  if (query.data === undefined) {
+    return (
+      <Card>
+        <Empty
+          icon="target"
+          title="See who will receive your broadcast"
+          action={
+            <Button variant="primary" icon="refresh" onClick={load} loading={query.isFetching}>
+              {query.isFetching ? "Loading from Telegram…" : "Load groups"}
+            </Button>
+          }
+        >
+          This asks Telegram for every group the account is in. It can take a few seconds on large accounts.
+        </Empty>
+        {error && <Alert tone="bad">{error}</Alert>}
+      </Card>
+    );
+  }
+
   return (
     <>
-      {query.data === undefined ? (
-        <GlassCard>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10, alignItems: "center", padding: "8px 0" }}>
-            {error && <div style={{ color: "var(--bad)", fontSize: 13 }}>{error}</div>}
-            <Button onClick={preview} disabled={query.isFetching}>
-              {query.isFetching ? "Loading…" : "Preview all Telegram groups"}
-            </Button>
-          </div>
-        </GlassCard>
-      ) : (
-        <>
-          <Input placeholder="Search groups" value={search} onChange={(e) => setSearch(e.target.value)} />
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 4px" }}>
-            <span style={{ fontSize: 12.5, fontWeight: 700, color: "var(--text2)" }}>
-              {groups.length} group(s) included
-            </span>
-            <button
-              type="button"
-              onClick={preview}
-              style={{ background: "none", border: "none", color: "var(--accent)", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}
-            >
-              {query.isFetching ? "Refreshing…" : "Refresh"}
-            </button>
-          </div>
-          <div className="card-grid">
-            {filtered.map((g) => (
-              <GlassCard key={g.id}>
-                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                  <AvatarBadge seed={g.name} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 14.5, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {g.name}
-                    </div>
-                    <div style={{ fontSize: 12, color: "var(--text3)", marginTop: 2 }}>
-                      {g.kind}
-                      {g.stars_required > 0 ? ` · ${g.stars_required} stars` : ""}
-                    </div>
-                  </div>
+      <div className="cluster" style={{ flexWrap: "nowrap" }}>
+        <div className="search grow">
+          <Icon name="search" size={16} />
+          <Input placeholder="Search groups" value={search} onChange={(e) => { setSearch(e.target.value); setShown(PAGE); }} />
+        </div>
+        <Button icon="refresh" onClick={load} loading={query.isFetching} aria-label="Refresh">
+          <span className="only-desktop">Refresh</span>
+        </Button>
+      </div>
+      {error && <Alert tone="bad">{error}</Alert>}
+      <Card flush>
+        <div className="spread" style={{ padding: "14px 20px" }}>
+          <span className="card-title">
+            <span className="num">{groups.length.toLocaleString()}</span> groups included
+          </span>
+          {search && <span className="faint" style={{ fontSize: 12.5 }}>{filtered.length} match</span>}
+        </div>
+        {filtered.length === 0 ? (
+          <Empty icon="search" title="No group matches that search" />
+        ) : (
+          <div className="rows">
+            {filtered.slice(0, shown).map((g) => (
+              <div className="row row--tight" key={g.id} style={{ borderTop: "1px solid var(--line)" }}>
+                <Avatar name={g.name} size={34} />
+                <div className="row-main">
+                  <div className="row-title">{g.name}</div>
+                  <div className="row-sub" style={{ textTransform: "capitalize" }}>{g.kind}</div>
                 </div>
-              </GlassCard>
+                {g.stars_required > 0 && (
+                  <Pill tone="warn">
+                    <Icon name="star" size={11} />
+                    {g.stars_required} Stars
+                  </Pill>
+                )}
+              </div>
             ))}
           </div>
-        </>
-      )}
+        )}
+        {filtered.length > shown && (
+          <div style={{ padding: 14, borderTop: "1px solid var(--line)" }}>
+            <Button block onClick={() => setShown((n) => n + PAGE * 2)}>
+              Show more ({(filtered.length - shown).toLocaleString()} left)
+            </Button>
+          </div>
+        )}
+      </Card>
     </>
   );
 }
 
-const SKIP_REASON_LABELS: Record<string, string> = {
-  auto_deleted: "wiped",
-  stars_required: "stars",
-  skipped_stars: "stars",
-  skipped_slowmode: "slowmode",
-};
-
-function reasonLabel(reason: string): string {
-  return SKIP_REASON_LABELS[reason] ?? reason.replace(/_/g, " ");
-}
-
-// s.at is Python's str(datetime) ("2026-10-25 09:27:08.101895+00:00"), not
-// ISO -- trim straight to "YYYY-MM-DD HH:MM" instead of showing microseconds
-// and a UTC offset, which wraps awkwardly in the card's narrow timestamp line.
-function formatSkipAt(at: string): string {
-  return at.slice(0, 16);
-}
-
-function BlacklistTab({ profileId }: { profileId: number }) {
+function BlacklistTab({ profileId, skips, isLoading }: { profileId: number; skips: Skip[]; isLoading: boolean }) {
   const qc = useQueryClient();
   const [busyId, setBusyId] = useState<string | "all" | null>(null);
   const [notice, setNotice] = useState("");
-  const [confirmClear, setConfirmClear] = useState(false);
-
-  const { data, isLoading } = useQuery({
-    queryKey: ["skips", profileId],
-    queryFn: () => api.get<Skip[]>(`/profiles/${profileId}/skips`),
-  });
-  const skips = data ?? [];
+  const [confirm, setConfirm] = useState<"clear" | "leave" | null>(null);
 
   const restore = useMutation({
-    mutationFn: (targetId: string) =>
-      api.post(`/profiles/${profileId}/skips/${encodeURIComponent(targetId)}/restore`),
+    mutationFn: (targetId: string) => api.post(`/profiles/${profileId}/skips/${encodeURIComponent(targetId)}/restore`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["skips", profileId] }),
   });
 
@@ -163,22 +167,21 @@ function BlacklistTab({ profileId }: { profileId: number }) {
     mutationFn: () => api.del(`/profiles/${profileId}/skips`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["skips", profileId] });
-      setConfirmClear(false);
+      setConfirm(null);
     },
   });
 
   async function leaveAll() {
     setBusyId("all");
     setNotice("");
+    setConfirm(null);
     try {
       const res = await api.post<{ left: { target_id: string; name: string }[]; failed: { target_id: string; name: string; detail: string }[] }>(
         `/profiles/${profileId}/leave-groups`,
         {},
       );
       let msg = `Left ${res.left.length} group(s).`;
-      if (res.failed.length > 0) {
-        msg += ` Failed: ${res.failed.map((f) => `${f.name} (${f.detail})`).join(", ")}`;
-      }
+      if (res.failed.length > 0) msg += ` Failed: ${res.failed.map((f) => `${f.name} (${f.detail})`).join(", ")}`;
       setNotice(msg);
       qc.invalidateQueries({ queryKey: ["skips", profileId] });
     } catch (err) {
@@ -192,13 +195,10 @@ function BlacklistTab({ profileId }: { profileId: number }) {
     setBusyId(targetId);
     setNotice("");
     try {
-      const res = await api.post<{ left: unknown[]; failed: { detail: string }[] }>(
-        `/profiles/${profileId}/leave-groups`,
-        { target_ids: [targetId] },
-      );
-      if (res.failed.length > 0) {
-        setNotice(`Failed to leave: ${res.failed[0].detail}`);
-      }
+      const res = await api.post<{ left: unknown[]; failed: { detail: string }[] }>(`/profiles/${profileId}/leave-groups`, {
+        target_ids: [targetId],
+      });
+      if (res.failed.length > 0) setNotice(`Failed to leave: ${res.failed[0].detail}`);
       qc.invalidateQueries({ queryKey: ["skips", profileId] });
     } catch (err) {
       setNotice(err instanceof ApiError ? err.message : "Could not leave this group.");
@@ -207,95 +207,94 @@ function BlacklistTab({ profileId }: { profileId: number }) {
     }
   }
 
-  if (isLoading) return <GlassCard>Loading…</GlassCard>;
-  if (skips.length === 0) return <GlassCard>No blacklisted groups yet.</GlassCard>;
+  if (isLoading) {
+    return (
+      <Card flush>
+        <SkeletonRows count={4} />
+      </Card>
+    );
+  }
+  if (skips.length === 0) {
+    return (
+      <Card>
+        <Empty icon="check" title="Nothing blacklisted">
+          Groups land here automatically when they wipe a post, charge Stars, or block the account. They are then skipped.
+        </Empty>
+        {notice && <Alert>{notice}</Alert>}
+      </Card>
+    );
+  }
 
   return (
     <>
-      <div style={{ fontSize: 12.5, color: "var(--text2)", lineHeight: 1.5, padding: "0 4px" }}>
-        Auto-blacklisted after a wiped post or a Stars paywall. Leaving removes the account from
-        the group entirely — you'd need to be re-invited to rejoin.
-      </div>
+      <p className="hint">
+        Added automatically after a wiped post, a Stars paywall or a ban, and skipped from then on. <b>Restore</b> puts a group
+        back in the broadcast. <b>Leave</b> removes the account from the group for good: you would need a new invite to rejoin.
+      </p>
+      {notice && <Alert>{notice}</Alert>}
 
-      <Button variant="danger" onClick={leaveAll} disabled={busyId !== null}>
-        {busyId === "all" ? "Leaving…" : `Leave all ${skips.length} blacklisted group(s)`}
-      </Button>
-      {notice && <div style={{ fontSize: 12.5, color: "var(--text2)", padding: "0 4px", lineHeight: 1.5 }}>{notice}</div>}
-
-      <div className="card-grid">
+      <div className="grid grid--cards">
         {skips.map((s) => (
-          <GlassCard key={s.target_id}>
-            <div style={{ display: "flex", flexDirection: "column", gap: 11 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                <AvatarBadge seed={s.name} size={40} fontSize={14} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 14.5, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {s.name}
-                  </div>
-                  <div style={{ fontSize: 12, color: "var(--text3)", marginTop: 2 }}>{formatSkipAt(s.at)}</div>
-                </div>
-                <span
-                  style={{
-                    fontSize: 11.5,
-                    fontWeight: 700,
-                    padding: "5px 10px",
-                    borderRadius: 999,
-                    background: "var(--warn-soft)",
-                    color: "var(--warn)",
-                    whiteSpace: "nowrap",
-                    flexShrink: 0,
-                  }}
-                >
-                  {reasonLabel(s.reason)}
-                </span>
+          <Card key={s.target_id}>
+            <div className="cluster" style={{ flexWrap: "nowrap", alignItems: "flex-start" }}>
+              <Avatar name={s.name} size={38} />
+              <div className="grow">
+                <div className="row-title">{s.name}</div>
+                <div className="row-sub">{fmtAgo(parseServerTime(s.at))}</div>
               </div>
-              <div
-                style={{
-                  fontSize: 12.5,
-                  color: "var(--text2)",
-                  background: "var(--field)",
-                  boxShadow: "var(--field-in)",
-                  borderRadius: 13,
-                  padding: "9px 12px",
-                }}
-              >
+              <Pill tone="warn">{resultLabel(s.reason)}</Pill>
+            </div>
+            {s.detail && (
+              <div className="hint" style={{ marginTop: 12 }}>
                 {s.detail}
               </div>
-              <div style={{ display: "flex", gap: 8 }}>
-                <Button variant="outline" small onClick={() => restore.mutate(s.target_id)} disabled={busyId !== null}>
-                  Restore
-                </Button>
-                <Button variant="danger" small onClick={() => leaveOne(s.target_id)} disabled={busyId !== null}>
-                  {busyId === s.target_id ? "Leaving…" : "Leave group"}
-                </Button>
-              </div>
+            )}
+            <div className="btn-row" style={{ marginTop: 14 }}>
+              <Button size="sm" icon="undo" className="grow" onClick={() => restore.mutate(s.target_id)} disabled={busyId !== null}>
+                Restore
+              </Button>
+              <Button size="sm" variant="danger" icon="logout" className="grow" onClick={() => leaveOne(s.target_id)} loading={busyId === s.target_id} disabled={busyId !== null}>
+                {busyId === s.target_id ? "Leaving…" : "Leave group"}
+              </Button>
             </div>
-          </GlassCard>
+          </Card>
         ))}
       </div>
 
-      {confirmClear ? (
-        <GlassCard>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <div style={{ fontSize: 13, color: "var(--text2)", lineHeight: 1.5 }}>
-              Clear the entire blacklist? Every group above becomes eligible for broadcasts again
-              — you stay a member of all of them, nothing is left.
+      <Card>
+        {confirm === null ? (
+          <div className="btn-row">
+            <Button className="grow" onClick={() => setConfirm("clear")} disabled={busyId !== null}>
+              Clear the blacklist
+            </Button>
+            <Button variant="danger" className="grow" onClick={() => setConfirm("leave")} loading={busyId === "all"} disabled={busyId !== null}>
+              {busyId === "all" ? "Leaving…" : `Leave all ${skips.length}`}
+            </Button>
+          </div>
+        ) : (
+          <div className="stack stack--sm">
+            <div className="muted" style={{ fontSize: 13.5, lineHeight: 1.5 }}>
+              {confirm === "clear"
+                ? "Clear the whole blacklist? Every group above becomes eligible for broadcasts again. You stay a member of all of them."
+                : `Leave all ${skips.length} blacklisted groups? The account is removed from each one and would need a new invite to rejoin.`}
             </div>
-            <div style={{ display: "flex", gap: 8 }}>
-              <Button variant="outline" small onClick={() => setConfirmClear(false)}>
-                Cancel
+            <div className="btn-row">
+              <Button className="grow" onClick={() => setConfirm(null)}>
+                Keep as is
               </Button>
-              <Button variant="danger" small onClick={() => clearAll.mutate()} disabled={clearAll.isPending}>
-                {clearAll.isPending ? "Clearing…" : "Yes, clear it"}
-              </Button>
+              {confirm === "clear" ? (
+                <Button variant="danger" className="grow" onClick={() => clearAll.mutate()} loading={clearAll.isPending}>
+                  Yes, clear it
+                </Button>
+              ) : (
+                <Button variant="danger" className="grow" onClick={leaveAll}>
+                  Yes, leave them all
+                </Button>
+              )}
             </div>
           </div>
-        </GlassCard>
-      ) : (
-        <Button variant="outline" onClick={() => setConfirmClear(true)} disabled={busyId !== null}>
-          Clear entire blacklist (keeps you in the groups)
-        </Button>
-      )}
+        )}
+      </Card>
     </>
   );
 }
@@ -339,44 +338,39 @@ function DiscordTab({ profileId }: { profileId: number }) {
 
   return (
     <>
-      <GlassCard>
-        <div style={{ display: "flex", flexDirection: "column", gap: 10, alignItems: "center", padding: "4px 0" }}>
-          {error && <div style={{ color: "var(--bad)", fontSize: 13 }}>{error}</div>}
-          <Button onClick={refresh} disabled={channelsQuery.isFetching}>
-            {channelsQuery.isFetching ? "Loading…" : "Refresh Discord channels"}
-          </Button>
-        </div>
-      </GlassCard>
-      <div className="card-grid">
-        {channels.map((c) => (
-          <GlassCard key={c.id}>
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <span
-                style={{
-                  width: 36,
-                  height: 36,
-                  borderRadius: 12,
-                  background: "var(--field)",
-                  boxShadow: "var(--field-in)",
-                  display: "grid",
-                  placeItems: "center",
-                  fontSize: 16,
-                  fontWeight: 800,
-                  color: "var(--text3)",
-                  flexShrink: 0,
-                }}
-              >
-                #
-              </span>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 14.5, fontWeight: 700 }}>{c.name}</div>
-                <div style={{ fontSize: 12, color: "var(--text3)", marginTop: 1 }}>{c.guild}</div>
-              </div>
-              <ToggleSwitch on={selected.has(c.id)} onChange={() => toggle(c.id)} />
-            </div>
-          </GlassCard>
-        ))}
+      <div className="spread">
+        <span className="muted" style={{ fontSize: 13.5 }}>
+          <span className="num">{selected.size}</span> channel{selected.size === 1 ? "" : "s"} selected
+        </span>
+        <Button icon="refresh" onClick={refresh} loading={channelsQuery.isFetching}>
+          {channelsQuery.isFetching ? "Loading…" : channelsQuery.data ? "Refresh" : "Load channels"}
+        </Button>
       </div>
+      {error && <Alert tone="bad">{error}</Alert>}
+      <Card flush>
+        {channelsQuery.data === undefined ? (
+          <Empty icon="hash" title="Pick the Discord channels to post to">
+            Load the channels the bot can see, then switch on the ones a broadcast should also go to.
+          </Empty>
+        ) : channels.length === 0 ? (
+          <Empty icon="hash" title="The bot is not in any channel yet" />
+        ) : (
+          <div className="rows">
+            {channels.map((c) => (
+              <div className="row" key={c.id}>
+                <span className="empty-icon" style={{ width: 36, height: 36, margin: 0 }}>
+                  <Icon name="hash" size={16} />
+                </span>
+                <div className="row-main">
+                  <div className="row-title">{c.name}</div>
+                  <div className="row-sub">{c.guild}</div>
+                </div>
+                <Switch on={selected.has(c.id)} onChange={() => toggle(c.id)} label={c.name} />
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
     </>
   );
 }
