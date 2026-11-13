@@ -29,6 +29,7 @@
   border-bottom: 1px solid var(--line);
 }
 .topbar-end {
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -38,7 +39,8 @@
   align-items: center;
   gap: 9px;
   height: 38px;
-  max-width: 56vw;
+  max-width: 42vw;
+  min-width: 0;
   padding: 0 10px 0 5px;
   border-radius: var(--r-full);
   border: 1px solid var(--line);
@@ -394,6 +396,9 @@
   gap: 16px;
   min-width: 0;
 }
+.grid > * {
+  min-width: 0;
+}
 .grid--stats {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
@@ -401,8 +406,10 @@
 .grid--cards {
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
 }
-.only-desktop {
-  display: none;
+@media (max-width: 1023px) {
+  .only-desktop {
+    display: none !important;
+  }
 }
 
 @media (min-width: 760px) {
@@ -436,9 +443,6 @@
   .sticky-col {
     position: sticky;
     top: 24px;
-  }
-  .only-desktop {
-    display: revert;
   }
   .only-mobile {
     display: none !important;
@@ -943,4 +947,15 @@ ul.auth-points {
   .eta-cell b {
     font-size: 14.5px;
   }
+}
+
+/* Tooltips of the outermost bars stay inside the card. */
+.chart-col:nth-child(-n + 2) .chart-tip {
+  left: 0;
+  transform: none;
+}
+.chart-col:nth-last-child(-n + 2) .chart-tip {
+  left: auto;
+  right: 0;
+  transform: none;
 }
