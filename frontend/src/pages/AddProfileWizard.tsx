@@ -1,11 +1,10 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { BottomSheet } from "../components/BottomSheet";
-import { Field, Input } from "../components/Field";
-import { Button } from "../components/Button";
+import { Alert, Button, Field, Input, Sheet } from "../components/ui";
 import { api, ApiError } from "../api/client";
 
 type Step = "phone" | "code" | "password" | "paste";
+const ORDER: Step[] = ["phone", "code", "password"];
 
 interface Props {
   onClose: () => void;
@@ -56,15 +55,12 @@ export function AddProfileWizard({ onClose, onDone, reconnectProfile }: Props) {
     setError("");
     setBusy(true);
     try {
-      const res = await api.post<{ needs_password: boolean; profile_id?: number }>(
-        "/profiles/phone/verify-code",
-        { wizard_token: wizardToken, code: code.replace(/\s/g, "") },
-      );
-      if (res.needs_password) {
-        setStep("password");
-      } else if (res.profile_id) {
-        finish(res.profile_id);
-      }
+      const res = await api.post<{ needs_password: boolean; profile_id?: number }>("/profiles/phone/verify-code", {
+        wizard_token: wizardToken,
+        code: code.replace(/\s/g, ""),
+      });
+      if (res.needs_password) setStep("password");
+      else if (res.profile_id) finish(res.profile_id);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Invalid or expired code.");
     } finally {
@@ -109,175 +105,103 @@ export function AddProfileWizard({ onClose, onDone, reconnectProfile }: Props) {
     }
   }
 
+  function go(next: Step) {
+    setError("");
+    setStep(next);
+  }
+
   return (
-    <BottomSheet onClose={onClose}>
+    <Sheet onClose={onClose}>
       {step !== "paste" && (
-        <div style={{ display: "flex", gap: 6 }}>
-          {["phone", "code", "password"].map((s, i) => {
-            const order = ["phone", "code", "password"];
-            const reached = order.indexOf(step) >= i;
-            return (
-              <span
-                key={s}
-                style={{
-                  flex: 1,
-                  height: 4,
-                  borderRadius: 999,
-                  background: reached ? "var(--accent-grad)" : "var(--hair)",
-                }}
-              />
-            );
-          })}
+        <div className="steps">
+          {ORDER.map((s, i) => (
+            <i key={s} className={ORDER.indexOf(step) >= i ? "on" : ""} />
+          ))}
         </div>
       )}
 
       {step === "phone" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <>
           <div>
-            <div style={{ fontSize: 21, fontWeight: 800, letterSpacing: "-0.03em" }}>
-              {reconnectProfile ? "Reconnect profile" : "Add a profile"}
-            </div>
-            <div style={{ fontSize: 13, color: "var(--text2)", marginTop: 5, lineHeight: 1.45 }}>
+            <div className="sheet-title">{reconnectProfile ? "Reconnect profile" : "Add a profile"}</div>
+            <div className="sheet-sub">
               {reconnectProfile
-                ? "Log back in for this profile — its history and stats stay exactly as they are."
-                : "Same flow Telegram uses for any new device — no computer needed."}
+                ? "Log back in for this profile. Its history and stats stay exactly as they are."
+                : "The same login Telegram uses for any new device. No computer needed."}
             </div>
           </div>
           <Field label="Profile name">
-            <Input
-              value={label}
-              onChange={(e) => setLabel(e.target.value)}
-              placeholder="e.g. My main account"
-              autoFocus={!reconnectProfile}
-              disabled={!!reconnectProfile}
-            />
+            <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. Main account" autoFocus={!reconnectProfile} disabled={!!reconnectProfile} />
           </Field>
-          <Field label="Phone number">
-            <Input
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              placeholder="+15551234567"
-              type="tel"
-            />
+          <Field label="Phone number" hint="With country code, the way Telegram shows it.">
+            <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+234 803 555 0142" type="tel" autoFocus={!!reconnectProfile} />
           </Field>
-          {error && <div style={{ color: "var(--bad)", fontSize: 13 }}>{error}</div>}
-          <Button onClick={sendCode} disabled={busy}>
+          {error && <Alert tone="bad">{error}</Alert>}
+          <Button variant="primary" size="lg" block onClick={sendCode} loading={busy}>
             {busy ? "Sending…" : "Send login code"}
           </Button>
-          <button
-            type="button"
-            onClick={() => {
-              setError("");
-              setStep("paste");
-            }}
-            style={{ background: "none", border: "none", color: "var(--text3)", fontSize: 12.5, cursor: "pointer" }}
-          >
+          <button type="button" className="link" style={{ alignSelf: "center", color: "var(--text-3)" }} onClick={() => go("paste")}>
             Advanced: paste an existing session string
           </button>
-        </div>
+        </>
       )}
 
       {step === "code" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 15 }}>
+        <>
           <div>
-            <div style={{ fontSize: 21, fontWeight: 800, letterSpacing: "-0.03em" }}>
-              Enter the code
-            </div>
-            <div style={{ fontSize: 13, color: "var(--text2)", marginTop: 5, lineHeight: 1.45 }}>
-              Sent to {phone} — it arrives inside Telegram, not by SMS.
-            </div>
+            <div className="sheet-title">Enter the code</div>
+            <div className="sheet-sub">Sent to {phone}. It arrives inside Telegram, not by SMS.</div>
           </div>
           <Field label="Login code">
-            <Input
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-              autoFocus
-              inputMode="numeric"
-            />
+            <Input className="input--code" value={code} onChange={(e) => setCode(e.target.value)} autoFocus inputMode="numeric" autoComplete="one-time-code" />
           </Field>
-          {error && <div style={{ color: "var(--bad)", fontSize: 13 }}>{error}</div>}
-          <Button onClick={verifyCode} disabled={busy || !code.trim()}>
+          {error && <Alert tone="bad">{error}</Alert>}
+          <Button variant="primary" size="lg" block onClick={verifyCode} loading={busy} disabled={!code.trim()}>
             {busy ? "Verifying…" : "Verify code"}
           </Button>
-          <button
-            type="button"
-            onClick={() => {
-              setError("");
-              setStep("phone");
-            }}
-            style={{ background: "none", border: "none", color: "var(--text3)", fontSize: 12.5, cursor: "pointer" }}
-          >
+          <button type="button" className="link" style={{ alignSelf: "center", color: "var(--text-3)" }} onClick={() => go("phone")}>
             Start over
           </button>
-        </div>
+        </>
       )}
 
       {step === "password" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 15 }}>
+        <>
           <div>
-            <div style={{ fontSize: 21, fontWeight: 800, letterSpacing: "-0.03em" }}>
-              Two-step password
-            </div>
-            <div style={{ fontSize: 13, color: "var(--text2)", marginTop: 5, lineHeight: 1.45 }}>
-              This account has Two-Step Verification on. Enter its password to finish.
-            </div>
+            <div className="sheet-title">Two-step password</div>
+            <div className="sheet-sub">This account has Two-Step Verification on. Enter its password to finish.</div>
           </div>
           <Field label="Telegram Two-Step Verification password">
-            <Input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoFocus
-            />
+            <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoFocus />
           </Field>
-          {error && <div style={{ color: "var(--bad)", fontSize: 13 }}>{error}</div>}
-          <Button variant="secondary" onClick={verifyPassword} disabled={busy || !password}>
+          {error && <Alert tone="bad">{error}</Alert>}
+          <Button variant="primary" size="lg" block onClick={verifyPassword} loading={busy} disabled={!password}>
             {busy ? "Connecting…" : "Connect profile"}
           </Button>
-        </div>
+        </>
       )}
 
       {step === "paste" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <>
           <div>
-            <div style={{ fontSize: 21, fontWeight: 800, letterSpacing: "-0.03em" }}>
-              Paste a session
-            </div>
-            <div style={{ fontSize: 13, color: "var(--text2)", marginTop: 5, lineHeight: 1.45 }}>
-              For a session generated locally with the bootstrap script.
-            </div>
+            <div className="sheet-title">Paste a session</div>
+            <div className="sheet-sub">For a session generated locally with the bootstrap script.</div>
           </div>
           <Field label="Profile name">
-            <Input
-              value={label}
-              onChange={(e) => setLabel(e.target.value)}
-              placeholder="e.g. My main account"
-              disabled={!!reconnectProfile}
-            />
+            <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. Main account" disabled={!!reconnectProfile} />
           </Field>
           <Field label="Session string">
-            <Input
-              type="password"
-              value={sessionString}
-              onChange={(e) => setSessionString(e.target.value)}
-            />
+            <Input type="password" value={sessionString} onChange={(e) => setSessionString(e.target.value)} />
           </Field>
-          {error && <div style={{ color: "var(--bad)", fontSize: 13 }}>{error}</div>}
-          <Button onClick={saveSession} disabled={busy}>
+          {error && <Alert tone="bad">{error}</Alert>}
+          <Button variant="primary" size="lg" block onClick={saveSession} loading={busy}>
             {busy ? "Saving…" : "Save profile"}
           </Button>
-          <button
-            type="button"
-            onClick={() => {
-              setError("");
-              setStep("phone");
-            }}
-            style={{ background: "none", border: "none", color: "var(--text3)", fontSize: 12.5, cursor: "pointer" }}
-          >
+          <button type="button" className="link" style={{ alignSelf: "center", color: "var(--text-3)" }} onClick={() => go("phone")}>
             Back to phone login
           </button>
-        </div>
+        </>
       )}
-    </BottomSheet>
+    </Sheet>
   );
 }

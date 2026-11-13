@@ -4,8 +4,6 @@ import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { ProfileProvider } from "./profile/ProfileContext";
 import { RequireAuth } from "./routes/RequireAuth";
 import { Shell } from "./routes/Shell";
-import { useThemeInit } from "./theme/useTheme";
-import { LiquidGlassDefs } from "./components/LiquidGlassDefs";
 import { Login } from "./pages/Login";
 import { SetPassword } from "./pages/SetPassword";
 import { Home } from "./pages/Home";
@@ -22,52 +20,35 @@ function RequirePasswordChange({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
-function AppBackground() {
-  return (
-    <div className="app-blobs">
-      <div className="b1" />
-      <div className="b2" />
-      <div className="b3" />
-    </div>
-  );
-}
-
 export default function App() {
-  useThemeInit();
-
   return (
     <AuthProvider>
       <ProfileProvider>
-        <div className="app-bg">
-          <LiquidGlassDefs />
-          <AppBackground />
-          <Routes>
-            <Route path="/login" element={<Login />} />
-            <Route
-              path="/set-password"
-              element={
-                <RequirePasswordChange>
-                  <SetPassword />
-                </RequirePasswordChange>
-              }
-            />
+        <Routes>
+          <Route path="/login" element={<Login />} />
+          <Route
+            path="/set-password"
+            element={
+              <RequirePasswordChange>
+                <SetPassword />
+              </RequirePasswordChange>
+            }
+          />
 
-            <Route element={<RequireAuth />}>
+          <Route element={<RequireAuth />}>
+            <Route element={<Shell />}>
+              <Route path="/home" element={<Home />} />
+              <Route path="/compose" element={<Compose />} />
+              <Route path="/progress" element={<Progress />} />
+              <Route path="/targets" element={<Targets />} />
+              <Route path="/log" element={<Log />} />
               <Route path="/profiles" element={<Profiles />} />
               <Route path="/admin" element={<Admin />} />
-
-              <Route element={<Shell />}>
-                <Route path="/home" element={<Home />} />
-                <Route path="/targets" element={<Targets />} />
-                <Route path="/compose" element={<Compose />} />
-                <Route path="/progress" element={<Progress />} />
-                <Route path="/log" element={<Log />} />
-              </Route>
             </Route>
+          </Route>
 
-            <Route path="*" element={<Navigate to="/home" replace />} />
-          </Routes>
-        </div>
+          <Route path="*" element={<Navigate to="/home" replace />} />
+        </Routes>
       </ProfileProvider>
     </AuthProvider>
   );

@@ -1,24 +1,12 @@
 import { useState, type FormEvent, type ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { GlassCard } from "../components/GlassCard";
-import { Field, Input } from "../components/Field";
-import { Button } from "../components/Button";
+import { Icon } from "../components/Icon";
+import { Alert, Button, Card, Field, Input } from "../components/ui";
+import { BrandMark } from "../routes/Shell";
 import { useAuth } from "../auth/AuthContext";
 import { api, ApiError } from "../api/client";
 import type { LoginStepResponse, TotpSetupConfirmResponse } from "../api/types";
-
-const MARK = (
-  <svg width="100%" height="100%" viewBox="0 0 24 24" fill="none">
-    <path
-      d="m22 2-7 20-4-9-9-4Z"
-      fill="none"
-      stroke="#fff"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    />
-  </svg>
-);
+import { BRAND_TAGLINE } from "../theme/accent";
 
 type Step =
   | { kind: "password" }
@@ -27,15 +15,11 @@ type Step =
   | { kind: "backup-codes"; codes: string[] };
 
 function CodeStep({
-  title,
-  subtitle,
   busy,
   error,
   onSubmit,
   extra,
 }: {
-  title: string;
-  subtitle: string;
   busy: boolean;
   error: string;
   onSubmit: (code: string) => void;
@@ -49,31 +33,18 @@ function CodeStep({
         onSubmit(code.trim());
       }}
     >
-      <GlassCard premium>
-        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          <div>
-            <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: "-0.02em" }}>{title}</div>
-            <div style={{ fontSize: 12.5, color: "var(--text3)", marginTop: 3, lineHeight: 1.4 }}>
-              {subtitle}
-            </div>
-          </div>
+      <Card>
+        <div className="stack">
           {extra}
-          <Field label="6-digit code (or a backup code)">
-            <Input
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-              placeholder="123456"
-              inputMode="numeric"
-              autoFocus
-              required
-            />
+          <Field label="6-digit code, or a backup code">
+            <Input className="input--code" value={code} onChange={(e) => setCode(e.target.value)} placeholder="123456" inputMode="numeric" autoComplete="one-time-code" autoFocus required />
           </Field>
-          {error && <div style={{ color: "var(--bad)", fontSize: 13, fontWeight: 600 }}>{error}</div>}
-          <Button type="submit" disabled={busy}>
+          {error && <Alert tone="bad">{error}</Alert>}
+          <Button type="submit" variant="primary" size="lg" block loading={busy}>
             {busy ? "Verifying…" : "Continue"}
           </Button>
         </div>
-      </GlassCard>
+      </Card>
     </form>
   );
 }
@@ -160,74 +131,46 @@ export function Login() {
     }
   }
 
+  let title = "Welcome back";
+  let sub = "Sign in to your workspace.";
   let card: ReactNode;
   if (step.kind === "password") {
     card = (
       <form onSubmit={handlePasswordSubmit}>
-        <GlassCard premium>
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <Card>
+          <div className="stack">
             <Field label="Email">
-              <Input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                autoFocus
-              />
+              <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus autoComplete="username" />
             </Field>
             <Field label="Password">
-              <Input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-              />
+              <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required autoComplete="current-password" />
             </Field>
-            {error && <div style={{ color: "var(--bad)", fontSize: 13, fontWeight: 600 }}>{error}</div>}
-            <Button type="submit" disabled={busy}>
-              {busy ? "Logging in…" : "Log in"}
+            {error && <Alert tone="bad">{error}</Alert>}
+            <Button type="submit" variant="primary" size="lg" block loading={busy}>
+              {busy ? "Signing in…" : "Sign in"}
             </Button>
           </div>
-        </GlassCard>
+        </Card>
       </form>
     );
   } else if (step.kind === "totp") {
-    card = (
-      <CodeStep
-        title="Verify it's you"
-        subtitle="Enter the 6-digit code from your authenticator app, or one of your backup codes."
-        busy={busy}
-        error={error}
-        onSubmit={handleTotpSubmit}
-      />
-    );
+    title = "Verify it's you";
+    sub = "Enter the 6-digit code from your authenticator app, or one of your backup codes.";
+    card = <CodeStep busy={busy} error={error} onSubmit={handleTotpSubmit} />;
   } else if (step.kind === "setup") {
+    title = "Set up 2-step login";
+    sub = "Scan this with Google Authenticator or any compatible app, then enter the code it shows. It is required before you can continue.";
     card = (
       <CodeStep
-        title="Set up 2-factor login"
-        subtitle="Scan this with Google Authenticator (or any compatible app), then enter the 6-digit code it shows. This is required before you can continue."
         busy={busy}
         error={error}
         onSubmit={handleSetupConfirm}
         extra={
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
-            <img
-              src={step.qrDataUri}
-              alt="2FA QR code"
-              style={{ width: 176, height: 176, borderRadius: 16, background: "#fff", padding: 8 }}
-            />
-            <div style={{ fontSize: 11.5, color: "var(--text3)", textAlign: "center" }}>
-              Can't scan? Enter this manually:
-              <div
-                className="mono"
-                style={{
-                  fontWeight: 700,
-                  fontSize: 13,
-                  marginTop: 3,
-                  wordBreak: "break-all",
-                  color: "var(--text2)",
-                }}
-              >
+          <div className="stack stack--sm" style={{ alignItems: "center" }}>
+            <img className="qr" src={step.qrDataUri} alt="2FA QR code" />
+            <div className="hint" style={{ textAlign: "center" }}>
+              Can't scan? Enter this key manually:
+              <div className="mono" style={{ color: "var(--text-2)", marginTop: 4, wordBreak: "break-all", fontWeight: 600 }}>
                 {step.secret}
               </div>
             </div>
@@ -236,180 +179,85 @@ export function Login() {
       />
     );
   } else {
+    title = "Save your backup codes";
+    sub = "Each one signs you in once if you lose your authenticator. They won't be shown again, so store them somewhere safe now.";
     card = (
-      <GlassCard premium>
-        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          <div>
-            <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: "-0.02em" }}>
-              Save your backup codes
-            </div>
-            <div style={{ fontSize: 12.5, color: "var(--text3)", marginTop: 3, lineHeight: 1.4 }}>
-              Each code logs you in once if you ever lose access to your authenticator app. They
-              won't be shown again — save them somewhere safe now.
-            </div>
-          </div>
-          <div
-            className="mono"
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              gap: 8,
-              background: "var(--glass-2)",
-              borderRadius: 14,
-              padding: 14,
-              fontSize: 14,
-              fontWeight: 700,
-            }}
-          >
+      <Card>
+        <div className="stack">
+          <div className="codes">
             {step.codes.map((c) => (
               <div key={c}>{c}</div>
             ))}
           </div>
-          <Button
-            variant="outline"
-            small
-            type="button"
-            onClick={() => navigator.clipboard?.writeText(step.codes.join("\n"))}
-          >
+          <Button icon="copy" onClick={() => navigator.clipboard?.writeText(step.codes.join("\n"))}>
             Copy all
           </Button>
-          <Button type="button" onClick={() => navigate("/home", { replace: true })}>
-            I've saved these — continue
+          <Button variant="primary" size="lg" block onClick={() => navigate("/home", { replace: true })}>
+            I've saved them, continue
           </Button>
         </div>
-      </GlassCard>
+      </Card>
     );
   }
 
-  const footer =
-    step.kind === "password" ? (
-      <div style={{ fontSize: 12.5, color: "var(--text3)", textAlign: "center", lineHeight: 1.5, padding: "0 10px", marginTop: 14 }}>
-        Accounts are created by your admin. There's no self-registration.
-      </div>
-    ) : null;
-
   return (
-    <>
-      {/* Mobile: centered card, below 900px */}
-      <div className="page page--no-nav login-mobile" style={{ justifyContent: "center", minHeight: "100dvh" }}>
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 14, marginBottom: 8 }}>
-          <div
-            style={{
-              width: 76,
-              height: 76,
-              padding: 22,
-              borderRadius: 24,
-              background: "var(--accent-grad)",
-              boxShadow:
-                "0 14px 34px var(--accent-soft), inset 0 1.5px 0 rgba(255,255,255,0.5), var(--premium-ring)",
-            }}
-          >
-            {MARK}
-          </div>
-          <div style={{ textAlign: "center" }}>
-            <div className="eyebrow-premium" style={{ justifyContent: "center", marginBottom: 4 }}>
-              Private workspace
-            </div>
-            <div style={{ fontSize: 27, fontWeight: 800, letterSpacing: "-0.03em" }}>Group Forwarder</div>
-            <div style={{ fontSize: 14, color: "var(--text2)", marginTop: 6, lineHeight: 1.45 }}>
-              One message. Every group.
-              <br />
-              Broadcast from your Telegram profiles.
-            </div>
+    <div className="auth">
+      <aside className="auth-brand">
+        <span className="orbit" />
+        <span className="orbit" />
+        <span className="orbit" />
+        <div className="cluster" style={{ position: "relative" }}>
+          <BrandMark />
+          <div>
+            <div className="brand-name">Forwarder</div>
+            <div className="brand-tag">{BRAND_TAGLINE}</div>
           </div>
         </div>
+        <div style={{ position: "relative" }}>
+          <div className="auth-headline">
+            One message.
+            <br />
+            Every group,
+            <br />
+            <em>at once.</em>
+          </div>
+          <p className="page-sub" style={{ fontSize: 15, maxWidth: 400, marginTop: 18 }}>
+            Queue a broadcast from any of your Telegram accounts and watch it land, group by group, with a live finish time.
+          </p>
+        </div>
+        <ul className="auth-points" style={{ position: "relative" }}>
+          <li>
+            <Icon name="zap" size={17} />
+            Runs on the server, even with the app closed
+          </li>
+          <li>
+            <Icon name="clock" size={17} />
+            Real-time progress and estimated completion
+          </li>
+          <li>
+            <Icon name="shield" size={17} />
+            2-step login on every account
+          </li>
+        </ul>
+      </aside>
 
-        {card}
-        {footer}
-      </div>
-
-      {/* Desktop: split screen brand moment, 900px+ */}
-      <div className="login-desktop">
-        <div className="d-login-brand">
-          <div
-            style={{
-              position: "absolute",
-              width: 340,
-              height: 340,
-              top: "50%",
-              left: -60,
-              transform: "translateY(-50%)",
-              borderRadius: "50%",
-              border: "1.5px solid #3b82f6",
-              animation: "pulseRing 3.4s cubic-bezier(.2,.6,.4,1) infinite",
-            }}
-          />
-          <div
-            style={{
-              position: "absolute",
-              width: 340,
-              height: 340,
-              top: "50%",
-              left: -60,
-              transform: "translateY(-50%)",
-              borderRadius: "50%",
-              border: "1.5px solid #93c5fd",
-              animation: "pulseRing 3.4s cubic-bezier(.2,.6,.4,1) infinite",
-              animationDelay: "1.1s",
-            }}
-          />
-          <div style={{ position: "relative", zIndex: 1 }}>
-            <div
-              style={{
-                width: 52,
-                height: 52,
-                padding: 15,
-                borderRadius: 16,
-                background: "var(--accent-grad)",
-                boxShadow:
-                  "0 16px 34px rgba(59,130,246,0.35), 0 0 0 1px rgba(147,197,253,0.4), 0 8px 22px rgba(147,197,253,0.14)",
-                marginBottom: 14,
-              }}
-            >
-              {MARK}
-            </div>
-            <div
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 5,
-                fontSize: 10.5,
-                fontWeight: 800,
-                letterSpacing: "0.09em",
-                textTransform: "uppercase",
-                color: "#93c5fd",
-                marginBottom: 12,
-              }}
-            >
-              <span style={{ width: 5, height: 5, borderRadius: "50%", background: "linear-gradient(135deg, #3b82f6, #93c5fd)" }} />
-              Private workspace
-            </div>
-            <div style={{ fontSize: 38, fontWeight: 800, letterSpacing: "-0.03em", lineHeight: 1.08, textWrap: "balance" }}>
-              One message.
-              <br />
-              Every group,
-              <br />
-              at once.
-            </div>
-            <div style={{ fontSize: 14, color: "#94a3b8", marginTop: 14, maxWidth: 360, lineHeight: 1.6 }}>
-              Forwarder keeps every Telegram and Discord profile you manage in sync — queue a send,
-              watch it land in real time.
-            </div>
+      <main className="auth-form">
+        <div className="auth-card">
+          <div className="auth-mobile-brand">
+            <BrandMark large />
           </div>
-        </div>
-        <div className="d-login-form">
-          <div style={{ width: "100%", maxWidth: 320, display: "flex", flexDirection: "column", gap: 14 }}>
-            <div style={{ marginBottom: 6 }}>
-              <div className="page-title" style={{ fontSize: 24 }}>
-                Welcome back
-              </div>
-              <div className="page-subtitle">Sign in to your workspace.</div>
-            </div>
-            {card}
-            {footer}
+          <div>
+            <h1 className="auth-title">{title}</h1>
+            <p className="page-sub">{sub}</p>
           </div>
+          {card}
+          {step.kind === "password" && (
+            <p className="hint" style={{ textAlign: "center" }}>
+              Accounts are created by your admin. There is no self-registration.
+            </p>
+          )}
         </div>
-      </div>
-    </>
+      </main>
+    </div>
   );
 }

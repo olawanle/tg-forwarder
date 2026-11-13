@@ -1,18 +1,17 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { GlassCard } from "../components/GlassCard";
-import { GlassHero } from "../components/GlassHero";
-import { Button } from "../components/Button";
-import { Textarea } from "../components/Field";
-import { SegmentedTabs, ToggleSwitch } from "../components/Small";
-import { Slider } from "../components/Slider";
+import { Icon } from "../components/Icon";
+import { Alert, Button, Card, CardHead, Empty, PageHead, Slider, Switch, Tabs, Textarea } from "../components/ui";
 import { useProfiles } from "../profile/ProfileContext";
 import { api, ApiError } from "../api/client";
 import type { AppSettings, Job, SavedMessage } from "../api/types";
+import { fmtDateTime, fmtDuration, parseServerTime } from "../lib/time";
 
 type Mode = "text" | "saved";
 const MAX_VARIANTS = 5;
+/** What a group costs on top of the delay when no earlier run says otherwise. */
+const DEFAULT_OVERHEAD_SECONDS = 2;
 
 function toLocalInputValue(d: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -74,6 +73,15 @@ export function Compose() {
     enabled: !!profileId,
   });
 
+  // The last broadcast tells us how many groups this account reaches and
+  // how long each one really took -- a far better basis for "how long will
+  // this take" than the delay alone.
+  const latestJob = useQuery({
+    queryKey: ["latest-job", profileId],
+    queryFn: () => api.get<Job | null>(`/profiles/${profileId}/jobs/latest`),
+    enabled: !!profileId,
+  });
+
   const scheduledJobs = useQuery({
     queryKey: ["scheduled-jobs", profileId],
     queryFn: () => api.get<Job[]>(`/profiles/${profileId}/jobs/scheduled`),
@@ -87,12 +95,10 @@ export function Compose() {
   });
 
   // Saved-message selections are IDs persisted on the profile's draft. If
-  // the user later deletes or untags one of those messages in Telegram, its
-  // ID would otherwise linger invisibly in savedIds forever (not rendered,
-  // since it's absent from the fetched list — but still sent to the backend
+  // one is later deleted or untagged in Telegram its ID would linger
+  // invisibly (absent from the fetched list, but still sent to the backend
   // and rotated into, causing real send errors). Fetch the live tagged list
-  // once on entering saved mode with an existing selection, and prune
-  // savedIds to whatever's actually still valid whenever that list loads.
+  // once on entering saved mode with a selection, and prune to what's valid.
   const autoFetchedSaved = useRef<number | null>(null);
   useEffect(() => {
     if (mode !== "saved" || !profileId || savedIds.length === 0) return;
@@ -143,7 +149,7 @@ export function Compose() {
       qc.invalidateQueries({ queryKey: ["active-job", profileId] });
       qc.invalidateQueries({ queryKey: ["scheduled-jobs", profileId] });
       if (job.status === "scheduled") {
-        setSaveNotice(`Scheduled for ${new Date(job.scheduled_at!).toLocaleString()}.`);
+        setSaveNotice(`Scheduled for ${fmtDateTime(parseServerTime(job.scheduled_at))}.`);
       } else {
         navigate("/progress");
       }
@@ -187,31 +193,34 @@ export function Compose() {
 
   if (!activeProfile) {
     return (
-      <div className="page">
-        <h1 className="page-title">Compose</h1>
-        <GlassCard>Add a Telegram profile first.</GlassCard>
+      <div className="page page--narrow">
+        <PageHead title="New broadcast" />
+        <Card>
+          <Empty icon="users" title="No Telegram profile yet" action={<Link to="/profiles" className="btn btn--primary">Add a profile</Link>}>
+            Connect a Telegram account to start broadcasting.
+          </Empty>
+        </Card>
       </div>
     );
   }
 
   if (activeJob.data) {
     return (
-      <div className="page">
-        <h1 className="page-title">Compose</h1>
-        <GlassCard>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <div style={{ fontSize: 14, fontWeight: 700 }}>
-              Job #{activeJob.data.id} is {activeJob.data.status} ({activeJob.data.done}/
-              {activeJob.data.total || "?"}).
-            </div>
-            <div style={{ fontSize: 13, color: "var(--text2)" }}>
-              Start is disabled until it finishes or you cancel it.
-            </div>
-            <Button variant="secondary" onClick={() => navigate("/progress")}>
-              View progress
-            </Button>
-          </div>
-        </GlassCard>
+      <div className="page page--narrow">
+        <PageHead title="New broadcast" sub={activeProfile.label} />
+        <Card>
+          <Empty
+            icon="progress"
+            title={`Job #${activeJob.data.id} is still going (${activeJob.data.done}/${activeJob.data.total || "?"})`}
+            action={
+              <Button variant="primary" onClick={() => navigate("/progress")}>
+                View progress
+              </Button>
+            }
+          >
+            A profile sends one broadcast at a time. Start the next one when this finishes, or cancel it from Progress.
+          </Empty>
+        </Card>
       </div>
     );
   }
@@ -221,214 +230,200 @@ export function Compose() {
   const scheduleValid = !scheduleOn || (!!scheduledAt && new Date(scheduledAt).getTime() > Date.now());
   const canStart = !!activeProfile.has_session && hasContent && scheduleValid;
 
+  // Estimate from the last finished run: its group count, and what each
+  // group cost beyond that run's delay, applied to the delay chosen now.
+  const last = latestJob.data;
+  const lastUsable = last && last.status === "completed" && last.total > 0 && last.elapsed_seconds != null;
+  const groups = lastUsable ? last.total : null;
+  const overhead = lastUsable
+    ? Math.min(Math.max(last.elapsed_seconds! / last.total - last.delay_seconds, 1), 60)
+    : DEFAULT_OVERHEAD_SECONDS;
+  const perGroup = delay + overhead;
+  const estimate = groups ? groups * perGroup : null;
+  const scheduled = scheduledJobs.data ?? [];
+
   return (
-    <div className="page page--wide">
-      <div>
-        <h1 className="page-title">Compose</h1>
-        <div className="page-subtitle">Runs as a background job — you can close the app.</div>
-      </div>
+    <div className="page">
+      <PageHead title="New broadcast" sub="Runs on the server as a background job. You can close the app once it starts." />
 
-      <div className="split-grid">
-      <div>
-      {(scheduledJobs.data ?? []).length > 0 && (
-        <GlassCard soft>
-          <div style={{ fontSize: 12, fontWeight: 800, color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 8 }}>
-            Upcoming
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {(scheduledJobs.data ?? []).map((j) => (
-              <div key={j.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-                <span style={{ fontSize: 13, fontWeight: 600 }}>
-                  {j.scheduled_at ? new Date(j.scheduled_at).toLocaleString() : "—"}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => cancelScheduled.mutate(j.id)}
-                  disabled={cancelScheduled.isPending}
-                  style={{ background: "none", border: "none", color: "var(--bad)", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}
-                >
-                  Cancel
-                </button>
-              </div>
-            ))}
-          </div>
-        </GlassCard>
-      )}
-
-      <SegmentedTabs
-        value={mode}
-        onChange={setMode}
-        options={[
-          { value: "text", label: "Typed" },
-          { value: "saved", label: "Saved Message" },
-        ]}
-      />
-
-      {mode === "text" ? (
-        <>
-          {messages.map((m, i) => (
-            <GlassCard key={i}>
-              <div style={{ display: "flex", flexDirection: "column", gap: 11 }}>
-                {messages.length > 1 && (
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                    <span style={{ fontSize: 11.5, fontWeight: 800, color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.04em" }}>
-                      Variant {i + 1}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => removeVariant(i)}
-                      style={{ background: "none", border: "none", color: "var(--bad)", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
-                    >
-                      Remove
-                    </button>
-                  </div>
-                )}
-                <Textarea value={m} onChange={(e) => updateVariant(i, e.target.value)} placeholder="Your marketing message…" />
-                <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                  <span style={{ fontSize: 12, color: "var(--text3)", fontWeight: 600 }}>{m.length} / 4096</span>
-                </div>
-              </div>
-            </GlassCard>
-          ))}
-          {messages.length < MAX_VARIANTS && (
-            <Button variant="outline" small onClick={addVariant}>
-              + Add message variant
-            </Button>
-          )}
-          <div style={{ fontSize: 12, color: "var(--text3)", lineHeight: 1.5, padding: "0 4px" }}>
-            {messages.length > 1
-              ? "Rotates across targets in order — helps avoid identical repeated text getting flagged. "
-              : ""}
-            Supports <code>**bold**</code>, <code>__italic__</code>, <code>`code`</code>, <code>[text](url)</code>.
-            Formatting copied from a Telegram message won't survive — retype it with this syntax, or switch to Saved
-            Message mode.
-          </div>
-        </>
-      ) : (
-        <>
-          <div style={{ fontSize: 12.5, color: "var(--text2)", lineHeight: 1.5, padding: "0 4px" }}>
-            Write it in Telegram's Saved Messages with full formatting, react with any emoji to tag it, then pick it
-            here. Select more than one to rotate between them across a broadcast.
-          </div>
-          {staleNotice && (
-            <div style={{ display: "flex", gap: 9, alignItems: "flex-start", background: "var(--warn-soft)", borderRadius: 18, padding: "12px 14px" }}>
-              <span style={{ fontSize: 12.5, lineHeight: 1.5, color: "var(--text2)" }}>{staleNotice}</span>
-            </div>
-          )}
-          {savedMessages.error && (
-            <div style={{ color: "var(--bad)", fontSize: 12.5, fontWeight: 600, padding: "0 4px" }}>
-              {savedMessages.error instanceof ApiError ? savedMessages.error.message : "Could not load saved messages."}
-            </div>
-          )}
-          <Button
-            variant="outline"
-            onClick={() => savedMessages.refetch()}
-            disabled={savedMessages.isFetching}
-          >
-            {savedMessages.isFetching ? "Loading…" : "Refresh tagged Saved Messages"}
-          </Button>
-          {(savedMessages.data ?? []).map((m) => {
-            const idx = savedIds.indexOf(m.id);
-            const selected = idx !== -1;
-            return (
-              <GlassCard key={m.id} onClick={() => toggleSaved(m.id)}>
-                <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
-                  <span style={{ fontSize: 22, lineHeight: 1 }}>{m.tag}</span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13.5, lineHeight: 1.5 }}>{m.preview}</div>
-                  </div>
-                  <span
-                    style={{
-                      width: 22,
-                      height: 22,
-                      borderRadius: "50%",
-                      background: selected ? "var(--accent-grad)" : "transparent",
-                      boxShadow: "inset 0 0 0 2px var(--hair)",
-                      display: "grid",
-                      placeItems: "center",
-                      flexShrink: 0,
-                      fontSize: 11,
-                      fontWeight: 800,
-                      color: "#fff",
-                    }}
-                  >
-                    {selected ? idx + 1 : ""}
-                  </span>
-                </div>
-              </GlassCard>
-            );
-          })}
-          <div
-            style={{
-              display: "flex",
-              gap: 9,
-              alignItems: "flex-start",
-              background: "var(--warn-soft)",
-              borderRadius: 18,
-              padding: "12px 14px",
-            }}
-          >
-            <span style={{ fontSize: 12.5, lineHeight: 1.5, color: "var(--text2)" }}>
-              Without Telegram Premium on this profile, every group shows a "Forwarded from" label.
-            </span>
-          </div>
-        </>
-      )}
-      </div>
-
-      <div>
-      <GlassHero>
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <Slider label="Delay between sends" value={delay} min={0} max={60} step={1} suffix="s" onChange={setDelay} />
-          <Slider
-            label="Max slowmode wait"
-            value={maxSlow}
-            min={30}
-            max={1800}
-            step={30}
-            suffix="s"
-            onChange={setMaxSlow}
+      <div className="grid grid--main">
+        <div className="stack">
+          <Tabs
+            value={mode}
+            onChange={setMode}
+            options={[
+              { value: "text", label: "Typed message" },
+              { value: "saved", label: "Saved Message" },
+            ]}
           />
-          <div style={{ height: 1, background: "var(--hair)" }} />
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <span style={{ fontSize: 13.5, fontWeight: 700, paddingRight: 14 }}>
-              Also post to {selectedCount} Discord channel{selectedCount === 1 ? "" : "s"}
-            </span>
-            <ToggleSwitch on={includeDiscord} onChange={setIncludeDiscord} />
-          </div>
-          <div style={{ height: 1, background: "var(--hair)" }} />
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <span style={{ fontSize: 13.5, fontWeight: 700, paddingRight: 14 }}>Schedule for later</span>
-            <ToggleSwitch on={scheduleOn} onChange={setScheduleOn} />
-          </div>
-          {scheduleOn && (
-            <input
-              type="datetime-local"
-              className="field"
-              value={scheduledAt}
-              min={toLocalInputValue(new Date())}
-              onChange={(e) => setScheduledAt(e.target.value)}
-            />
+
+          {mode === "text" ? (
+            <>
+              {messages.map((m, i) => (
+                <Card key={i}>
+                  <div className="spread" style={{ marginBottom: 10 }}>
+                    <span className="eyebrow">{messages.length > 1 ? `Variant ${i + 1}` : "Message"}</span>
+                    {messages.length > 1 && (
+                      <button type="button" className="link link--danger" onClick={() => removeVariant(i)}>
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                  <Textarea value={m} onChange={(e) => updateVariant(i, e.target.value)} placeholder="Write the message every group should get…" maxLength={4096} />
+                  <div className="hint mono" style={{ textAlign: "right", marginTop: 8 }}>
+                    {m.length} / 4096
+                  </div>
+                </Card>
+              ))}
+              {messages.length < MAX_VARIANTS && (
+                <Button icon="plus" onClick={addVariant} style={{ borderStyle: "dashed", background: "transparent" }}>
+                  Add a message variant
+                </Button>
+              )}
+              <p className="hint">
+                {messages.length > 1 && "Variants rotate across groups in order, which helps identical text avoid being flagged. "}
+                Supports <code>**bold**</code>, <code>__italic__</code>, <code>`code`</code> and <code>[text](url)</code>. Formatting
+                pasted from Telegram won't survive: retype it with this syntax, or use a Saved Message.
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="hint">
+                Write it in Telegram's Saved Messages with full formatting and media, react to it with any emoji to tag it, then
+                pick it here. Pick more than one to rotate between them.
+              </p>
+              {staleNotice && <Alert tone="warn">{staleNotice}</Alert>}
+              {savedMessages.error && (
+                <Alert tone="bad">
+                  {savedMessages.error instanceof ApiError ? savedMessages.error.message : "Could not load saved messages."}
+                </Alert>
+              )}
+              <Button icon="refresh" onClick={() => savedMessages.refetch()} loading={savedMessages.isFetching}>
+                {savedMessages.isFetching ? "Loading…" : savedMessages.data ? "Refresh tagged messages" : "Load tagged Saved Messages"}
+              </Button>
+              {savedMessages.data && savedMessages.data.length === 0 && (
+                <Card>
+                  <Empty icon="message" title="No tagged messages found">
+                    React to a message in your Saved Messages with any emoji, then refresh.
+                  </Empty>
+                </Card>
+              )}
+              {(savedMessages.data ?? []).map((m) => {
+                const idx = savedIds.indexOf(m.id);
+                return (
+                  <button type="button" className="pick" key={m.id} aria-pressed={idx !== -1} onClick={() => toggleSaved(m.id)}>
+                    <span className="pick-tag">{m.tag}</span>
+                    <span className="grow" style={{ fontSize: 13.5, lineHeight: 1.5 }}>
+                      {m.preview}
+                    </span>
+                    <span className="pick-check">{idx !== -1 ? idx + 1 : ""}</span>
+                  </button>
+                );
+              })}
+              <Alert tone="warn">Without Telegram Premium on this profile, every group shows a "Forwarded from" label.</Alert>
+            </>
           )}
         </div>
-      </GlassHero>
 
-      {error && <div style={{ color: "var(--bad)", fontSize: 13, fontWeight: 600 }}>{error}</div>}
-      {saveNotice && <div style={{ color: "var(--ok)", fontSize: 13, fontWeight: 600 }}>{saveNotice}</div>}
+        <div className="stack sticky-col">
+          <Card>
+            <CardHead title="Delivery" />
+            <div className="stack">
+              <Slider label="Delay between sends" value={delay} min={0} max={60} step={1} format={(v) => `${v}s`} onChange={setDelay} />
+              <Slider label="Longest slowmode wait" value={maxSlow} min={30} max={1800} step={30} format={(v) => fmtDuration(v)} onChange={setMaxSlow} />
+              <hr className="divider" />
+              <div className="setting">
+                <div>
+                  <div className="setting-title">Also post to Discord</div>
+                  <div className="setting-sub">
+                    {selectedCount} channel{selectedCount === 1 ? "" : "s"} selected in Targets
+                  </div>
+                </div>
+                <Switch on={includeDiscord} onChange={setIncludeDiscord} label="Also post to Discord" />
+              </div>
+              <div className="setting">
+                <div>
+                  <div className="setting-title">Schedule for later</div>
+                  <div className="setting-sub">Starts by itself at the time you pick</div>
+                </div>
+                <Switch on={scheduleOn} onChange={setScheduleOn} label="Schedule for later" />
+              </div>
+              {scheduleOn && (
+                <input type="datetime-local" className="input" value={scheduledAt} min={toLocalInputValue(new Date())} onChange={(e) => setScheduledAt(e.target.value)} />
+              )}
+            </div>
+          </Card>
 
-      <div style={{ display: "flex", gap: 10 }}>
-        <Button variant="outline" style={{ flex: "0 0 108px" }} onClick={saveDraft}>
-          Save draft
-        </Button>
-        <Button
-          variant="secondary"
-          disabled={!canStart || start.isPending}
-          onClick={() => start.mutate()}
-        >
-          {start.isPending ? "Starting…" : scheduleOn ? "Schedule broadcast" : "Broadcast now"}
-        </Button>
-      </div>
-      </div>
+          <div className="card card--hero">
+            <div className="eyebrow eyebrow--accent" style={{ marginBottom: 14 }}>
+              Broadcast summary
+            </div>
+            <div className="summary">
+              <div>
+                <b>{groups ?? "—"}</b>
+                <span>Groups{groups ? " last run" : ""}</span>
+              </div>
+              <div>
+                <b>{includeDiscord ? selectedCount : 0}</b>
+                <span>Discord</span>
+              </div>
+              <div>
+                <b>{estimate ? `~${fmtDuration(estimate)}` : `${perGroup.toFixed(0)}s`}</b>
+                <span>{estimate ? "Est. time" : "Per group"}</span>
+              </div>
+            </div>
+            <div className="eta-note">
+              {estimate
+                ? `Based on your last broadcast: ${groups} groups at about ${perGroup.toFixed(1)}s each with this delay. The live estimate takes over once it starts.`
+                : "Roughly this long per group. You'll get a live estimate as soon as the broadcast starts."}
+            </div>
+            {!activeProfile.has_session && (
+              <div style={{ marginTop: 12 }}>
+                <Alert tone="bad">
+                  This profile has no Telegram session. <Link to="/profiles" className="link">Reconnect it</Link> first.
+                </Alert>
+              </div>
+            )}
+            {error && (
+              <div style={{ marginTop: 12 }}>
+                <Alert tone="bad">{error}</Alert>
+              </div>
+            )}
+            {saveNotice && (
+              <div style={{ marginTop: 12 }}>
+                <Alert tone="ok">{saveNotice}</Alert>
+              </div>
+            )}
+            <div className="btn-row" style={{ marginTop: 16, flexWrap: "nowrap" }}>
+              <Button size="lg" onClick={saveDraft}>
+                Save draft
+              </Button>
+              <Button variant="primary" size="lg" className="grow" icon={scheduleOn ? "calendar" : "send"} disabled={!canStart} loading={start.isPending} onClick={() => { setError(""); start.mutate(); }}>
+                {start.isPending ? "Starting…" : scheduleOn ? "Schedule" : "Broadcast now"}
+              </Button>
+            </div>
+          </div>
+
+          {scheduled.length > 0 && (
+            <Card flush>
+              <CardHead pad title="Scheduled" sub={`${scheduled.length} waiting to start`} />
+              <div className="rows" style={{ maxHeight: 260, overflowY: "auto" }}>
+                {scheduled.map((j) => (
+                  <div className="row row--tight" key={j.id}>
+                    <Icon name="calendar" size={17} className="faint" />
+                    <div className="row-main">
+                      <div className="row-title">{fmtDateTime(parseServerTime(j.scheduled_at))}</div>
+                      <div className="row-sub">Job #{j.id} · {j.delay_seconds}s delay</div>
+                    </div>
+                    <button type="button" className="link link--danger" disabled={cancelScheduled.isPending} onClick={() => cancelScheduled.mutate(j.id)}>
+                      Cancel
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )}
+        </div>
       </div>
     </div>
   );

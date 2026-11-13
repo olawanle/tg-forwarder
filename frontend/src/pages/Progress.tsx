@@ -1,41 +1,183 @@
+import { useEffect, useRef } from "react";
+import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { GlassCard } from "../components/GlassCard";
-import { GlassHero } from "../components/GlassHero";
-import { Button } from "../components/Button";
-import { PulseRing } from "../components/PulseRing";
-import { AvatarBadge, StatusPill, toneForStatus } from "../components/Small";
+import { Icon } from "../components/Icon";
+import { Alert, Avatar, Button, Card, CardHead, Empty, PageHead, Pill, ResultPill, Ring, SkeletonRows, jobStatus } from "../components/ui";
 import { useProfiles } from "../profile/ProfileContext";
 import { api } from "../api/client";
 import type { Job, JobResult } from "../api/types";
+import { jobCounts, useEta, useElapsed, useLiveJob, type LiveEta } from "../lib/jobs";
+import { durationParts, fmtClock, fmtDuration, fmtFinish, parseServerTime } from "../lib/time";
 
-const ACTIVE_STATUSES = new Set(["queued", "running"]);
+const COUNTERS: { key: string; label: string; color: string }[] = [
+  { key: "ok", label: "Sent", color: "var(--ok)" },
+  { key: "skipped_stars", label: "Stars", color: "var(--warn)" },
+  { key: "auto_deleted", label: "Wiped", color: "var(--warn)" },
+  { key: "other_skips", label: "Skipped", color: "var(--warn)" },
+  { key: "errors", label: "Errors", color: "var(--bad)" },
+];
+
+function BigDuration({ seconds, holding = false }: { seconds: number; holding?: boolean }) {
+  return (
+    <div className={`eta-time ${holding ? "is-holding" : ""}`} aria-live="off">
+      {durationParts(seconds).map(([n, unit]) => (
+        <span key={unit}>
+          {n}
+          <small>{unit}</small>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** "When will this be done?" -- the answer, and what it is based on. */
+function EtaCard({ job, eta, elapsed }: { job: Job; eta: LiveEta | null; elapsed: number | null }) {
+  const { done, total } = jobCounts(job);
+  const left = Math.max(total - done, 0);
+
+  if (job.status === "running" && eta) {
+    const share = elapsed != null ? elapsed / Math.max(elapsed + eta.secondsLeft, 1) : 0;
+    return (
+      <Card>
+        <div className="spread" style={{ marginBottom: 14 }}>
+          <span className="eyebrow">Estimated completion</span>
+          {eta.holding ? (
+            <Pill tone="warn" dot>
+              Held up
+            </Pill>
+          ) : eta.measured ? (
+            <Pill tone="accent" live>
+              Live
+            </Pill>
+          ) : (
+            <Pill>Rough estimate</Pill>
+          )}
+        </div>
+        <div className="cluster" style={{ alignItems: "baseline", gap: 10 }}>
+          <BigDuration seconds={eta.secondsLeft} holding={eta.holding} />
+          <span className="muted" style={{ fontSize: 14 }}>
+            left
+          </span>
+        </div>
+        <div className="eta-note">
+          {eta.holding
+            ? "This group is taking longer than usual, most likely a slowmode or flood wait. The clock picks up again once it is through."
+            : eta.measured
+              ? "Measured from how long this broadcast's groups are really taking, and updated after every one."
+              : "Based on your delay setting for now. It sharpens after the first few groups."}
+        </div>
+        <div className="bar" style={{ marginTop: 16 }}>
+          <i style={{ width: `${Math.round(share * 100)}%` }} />
+        </div>
+        <div className="eta-cells">
+          <div className="eta-cell">
+            <span className="eyebrow">Done by</span>
+            <b>{fmtFinish(eta.finishAt)}</b>
+          </div>
+          <div className="eta-cell">
+            <span className="eyebrow">Pace</span>
+            <b>{eta.paceSeconds.toFixed(1)}s / group</b>
+          </div>
+          <div className="eta-cell">
+            <span className="eyebrow">Elapsed</span>
+            <b>{fmtDuration(elapsed)}</b>
+          </div>
+        </div>
+      </Card>
+    );
+  }
+
+  if (job.status === "queued" || job.status === "running") {
+    const finishing = job.status === "running" && total > 0 && left === 0;
+    return (
+      <Card>
+        <div className="spread" style={{ marginBottom: 10 }}>
+          <span className="eyebrow">Estimated completion</span>
+          <Pill tone="accent" live>
+            {finishing ? "Wrapping up" : "Getting ready"}
+          </Pill>
+        </div>
+        <div className="section-title">{finishing ? "Finishing up…" : "Loading this account's groups…"}</div>
+        <div className="eta-note">
+          {finishing
+            ? "Every group has been reached. Closing the broadcast out."
+            : "The estimate appears as soon as the first message goes out."}
+          {elapsed != null && <> Elapsed {fmtDuration(elapsed)}.</>}
+        </div>
+      </Card>
+    );
+  }
+
+  const finishedAt = parseServerTime(job.updated_at);
+  const pace = job.elapsed_seconds != null && done > 0 ? job.elapsed_seconds / done : null;
+  const heading =
+    job.status === "completed" ? "Finished in" : job.status === "interrupted" ? "Paused after" : "Stopped after";
+  return (
+    <Card>
+      <div className="spread" style={{ marginBottom: 14 }}>
+        <span className="eyebrow">{heading}</span>
+        <Pill tone={jobStatus(job.status).tone}>{jobStatus(job.status).label}</Pill>
+      </div>
+      {job.elapsed_seconds != null ? <BigDuration seconds={job.elapsed_seconds} /> : <div className="eta-time">—</div>}
+      {job.status === "interrupted" && (
+        <div className="eta-note">
+          {left} group{left === 1 ? "" : "s"} still to go. It picks itself up when the server is back, or resume it now.
+        </div>
+      )}
+      <div className="eta-cells">
+        <div className="eta-cell">
+          <span className="eyebrow">{job.status === "completed" ? "Finished" : "Last update"}</span>
+          <b>{fmtClock(finishedAt)}</b>
+        </div>
+        <div className="eta-cell">
+          <span className="eyebrow">Avg pace</span>
+          <b>{pace != null ? `${pace.toFixed(1)}s / group` : "—"}</b>
+        </div>
+        <div className="eta-cell">
+          <span className="eyebrow">Reached</span>
+          <b>
+            {done} / {total || "?"}
+          </b>
+        </div>
+      </div>
+    </Card>
+  );
+}
 
 export function Progress() {
   const { activeProfile } = useProfiles();
   const qc = useQueryClient();
   const profileId = activeProfile?.id;
 
-  const activeJob = useQuery({
-    queryKey: ["active-job", profileId],
-    queryFn: () => api.get<Job | null>(`/profiles/${profileId}/jobs/active`),
-    enabled: !!profileId,
-    refetchInterval: (q) => (q.state.data && ACTIVE_STATUSES.has(q.state.data.status) ? 2000 : false),
-  });
-
-  const latestJob = useQuery({
-    queryKey: ["latest-job", profileId],
-    queryFn: () => api.get<Job | null>(`/profiles/${profileId}/jobs/latest`),
-    enabled: !!profileId && activeJob.data === null,
-  });
-
-  const job = activeJob.data ?? latestJob.data;
+  const { job, running, fetchedAt, isLoading } = useLiveJob(profileId, 2000);
+  const eta = useEta(job, fetchedAt);
+  const elapsed = useElapsed(job, fetchedAt);
 
   const results = useQuery({
     queryKey: ["job-results", job?.id],
     queryFn: () => api.get<JobResult[]>(`/profiles/${profileId}/jobs/${job!.id}/results`),
     enabled: !!job && !!profileId,
-    refetchInterval: job && ACTIVE_STATUSES.has(job.status) ? 2000 : false,
+    refetchInterval: running ? 2000 : false,
   });
+
+  // The last poll before a job ends can miss its final rows.
+  const wasRunning = useRef(false);
+  useEffect(() => {
+    if (wasRunning.current && !running && job) qc.invalidateQueries({ queryKey: ["job-results", job.id] });
+    wasRunning.current = running;
+  }, [running, job, qc]);
+
+  // Rows that arrived since the previous render slide in; the first load doesn't.
+  const seen = useRef<Set<number> | null>(null);
+  const rows = (results.data ?? []).slice(-200).reverse();
+  const fresh = new Set<number>();
+  if (seen.current) for (const r of rows) if (!seen.current.has(r.id)) fresh.add(r.id);
+  useEffect(() => {
+    if (results.data) seen.current = new Set(results.data.map((r) => r.id));
+  }, [results.data]);
+  useEffect(() => {
+    seen.current = null;
+  }, [job?.id]);
 
   async function cancel() {
     if (!profileId) return;
@@ -51,212 +193,147 @@ export function Progress() {
 
   if (!activeProfile) {
     return (
-      <div className="page">
-        <h1 className="page-title">Progress</h1>
-        <GlassCard>Add a Telegram profile first.</GlassCard>
+      <div className="page page--narrow">
+        <PageHead title="Progress" />
+        <Card>
+          <Empty icon="users" title="No Telegram profile yet" action={<Link to="/profiles" className="btn btn--primary">Add a profile</Link>}>
+            Connect a Telegram account to start broadcasting.
+          </Empty>
+        </Card>
       </div>
     );
   }
 
   if (!job) {
     return (
-      <div className="page">
-        <h1 className="page-title">Progress</h1>
-        <GlassCard>No broadcast jobs yet for this profile. Start one from Compose.</GlassCard>
+      <div className="page page--narrow">
+        <PageHead title="Progress" sub={activeProfile.label} />
+        <Card flush={isLoading}>
+          {isLoading ? (
+            <SkeletonRows count={3} />
+          ) : (
+            <Empty icon="progress" title="Nothing has gone out yet" action={<Link to="/compose" className="btn btn--primary">Write a broadcast</Link>}>
+              When you start a broadcast, it shows up here live: every group, as it is reached.
+            </Empty>
+          )}
+        </Card>
       </div>
     );
   }
 
-  const total = job.total || 1;
-  // done can render ahead of total for a moment when two polls land out of
-  // order (a slower "old total" response resolving after a newer "done"
-  // one) — clamp what's displayed so the numbers never look impossible.
-  const doneDisplay = Math.min(job.done, job.total || job.done);
-  const fraction = Math.min(doneDisplay / total, 1);
-  const isRunning = job.status === "running" || job.status === "queued";
+  const { done, total, fraction } = jobCounts(job);
+  const status = jobStatus(job.status);
   const isInterrupted = job.status === "interrupted";
-  const rows = (results.data ?? []).slice(-200).reverse();
-
-  const statusChip = (
-    <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 11px", borderRadius: 999, background: isRunning ? "var(--ok-soft)" : "var(--glass-2)" }}>
-      {isRunning && <span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--ok)", animation: "glassPulse 1.8s ease-in-out infinite" }} />}
-      <span style={{ fontSize: 11.5, fontWeight: 800, color: isRunning ? "var(--ok)" : "var(--text2)", textTransform: "capitalize" }}>{job.status}</span>
-    </div>
-  );
+  const summary = job.summary ?? {};
+  const hasSummary = Object.keys(summary).length > 0;
 
   return (
-    <>
-      {/* ---------------- Mobile: stacked card, below 900px ---------------- */}
-      <div className="page progress-mobile">
-        <div>
-          <h1 className="page-title">Progress</h1>
-          <div className="page-subtitle">
-            Job #{job.id} · {job.status} · runs on the server
-          </div>
-        </div>
+    <div className="page">
+      <PageHead
+        title={running ? "Broadcasting" : "Progress"}
+        sub={
+          <>
+            Job #{job.id} · {activeProfile.label} · runs on the server, so you can close this tab
+          </>
+        }
+        actions={
+          <>
+            {running && (
+              <Button variant="danger" icon="stop" onClick={cancel}>
+                Cancel
+              </Button>
+            )}
+            {isInterrupted && (
+              <Button variant="primary" icon="play" onClick={resume}>
+                Resume now
+              </Button>
+            )}
+            {!running && !isInterrupted && (
+              <Link to="/compose" className="btn btn--primary">
+                <Icon name="send" size={17} />
+                New broadcast
+              </Link>
+            )}
+          </>
+        }
+      />
 
-        <GlassHero>
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
-            <PulseRing fraction={fraction} active={isRunning}>
-              <b className="mono">{doneDisplay}</b>
-              <span>of {job.total || "?"} groups</span>
-            </PulseRing>
-            {statusChip}
-            <div style={{ textAlign: "center" }}>
-              <div style={{ fontSize: 15, fontWeight: 700 }}>{job.current_name || "—"}</div>
-              <div style={{ fontSize: 12.5, color: "var(--text3)", marginTop: 3 }}>{job.current_detail || ""}</div>
-            </div>
-            {job.error && <div style={{ color: "var(--bad)", fontSize: 13 }}>{job.error}</div>}
-            <div style={{ display: "flex", gap: 9, width: "100%" }}>
-              {isRunning && (
-                <Button variant="danger" onClick={cancel}>
-                  Cancel
-                </Button>
-              )}
-              {isInterrupted && (
-                <Button variant="secondary" onClick={resume}>
-                  Resume now
-                </Button>
-              )}
-            </div>
-          </div>
-        </GlassHero>
-
-        {job.summary && Object.keys(job.summary).length > 0 && (
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            {[
-              { key: "ok", label: "Sent", bg: "var(--ok-soft)", fg: "var(--ok)" },
-              { key: "skipped_stars", label: "Stars skipped", bg: "var(--warn-soft)", fg: "var(--warn)" },
-              { key: "auto_deleted", label: "Auto-deleted", bg: "var(--warn-soft)", fg: "var(--warn)" },
-              { key: "other_skips", label: "Other skips", bg: "var(--warn-soft)", fg: "var(--warn)" },
-              { key: "errors", label: "Errors", bg: "var(--bad-soft)", fg: "var(--bad)" },
-            ].map((s) => (
-              <div key={s.key} className="glass-card--soft" style={{ display: "flex", alignItems: "center", gap: 11, border: "1px solid var(--stroke)" }}>
-                <span style={{ width: 34, height: 34, borderRadius: 12, background: s.bg, display: "grid", placeItems: "center", fontSize: 15, fontWeight: 800, color: s.fg, flexShrink: 0 }}>
-                  {job.summary[s.key] ?? 0}
-                </span>
-                <span style={{ fontSize: 12.5, fontWeight: 600, color: "var(--text2)", lineHeight: 1.3 }}>{s.label}</span>
-              </div>
-            ))}
-          </div>
-        )}
-
-        <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: "-0.02em", padding: "0 4px" }}>Live feed</div>
-        <GlassCard>
-          <div style={{ display: "flex", flexDirection: "column" }}>
-            {rows.length === 0 && <div style={{ color: "var(--text3)", fontSize: 13, textAlign: "center", padding: "16px 0" }}>No results yet.</div>}
-            {rows.map((r) => (
-              <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 11, padding: "12px 4px", borderTop: "1px solid var(--hair)" }}>
-                <AvatarBadge seed={r.target_name} size={30} fontSize={11.5} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13.5, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.target_name}</div>
-                  <div style={{ fontSize: 11.5, color: "var(--text3)", marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.detail}</div>
-                </div>
-                <StatusPill label={r.status} tone={toneForStatus(r.status)} />
-              </div>
-            ))}
-          </div>
-        </GlassCard>
-      </div>
-
-      {/* ---------------- Desktop: ring + live queue table, 900px+ ---------------- */}
-      <div className="progress-desktop">
-        <div className="d-topbar">
-          <div>
-            <h1>Broadcasting</h1>
-            <p>
-              Job #{job.id} · {activeProfile.label}
-            </p>
-          </div>
-          {isRunning && (
-            <Button variant="danger" small onClick={cancel} style={{ width: "auto" }}>
-              Cancel
-            </Button>
-          )}
-          {isInterrupted && (
-            <Button variant="secondary" small onClick={resume} style={{ width: "auto" }}>
-              Resume now
-            </Button>
-          )}
-        </div>
-
-        <div className="d-grid" style={{ gridTemplateColumns: "0.9fr 1.1fr" }}>
-          <GlassHero style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 18, padding: 32 }}>
-            <PulseRing fraction={fraction} size={200} thickness={11} active={isRunning}>
-              <b className="mono" style={{ fontSize: 32 }}>
-                {Math.round(fraction * 100)}%
-              </b>
-              <span>
-                {doneDisplay} / {job.total || "?"}
-              </span>
-            </PulseRing>
-            {statusChip}
-            <div style={{ textAlign: "center" }}>
-              <div style={{ fontSize: 14, fontWeight: 700 }}>{job.current_name || "—"}</div>
-              <div style={{ fontSize: 12, color: "var(--text3)", marginTop: 3 }}>{job.current_detail || ""}</div>
-            </div>
-            {job.error && <div style={{ color: "var(--bad)", fontSize: 13 }}>{job.error}</div>}
-            {job.summary && Object.keys(job.summary).length > 0 && (
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, width: "100%" }}>
-                {[
-                  { key: "ok", label: "Sent", fg: "var(--ok)" },
-                  { key: "skipped_stars", label: "Stars skipped", fg: "var(--warn)" },
-                  { key: "auto_deleted", label: "Auto-deleted", fg: "var(--warn)" },
-                  { key: "other_skips", label: "Other skips", fg: "var(--warn)" },
-                  { key: "errors", label: "Errors", fg: "var(--bad)" },
-                ].map((s) => (
-                  <div key={s.key} className="glass-card--soft" style={{ textAlign: "center" }}>
-                    <div style={{ fontSize: 9.5, fontWeight: 800, color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.04em" }}>{s.label}</div>
-                    <div className="mono" style={{ fontSize: 20, fontWeight: 800, color: s.fg, marginTop: 2 }}>
-                      {job.summary[s.key] ?? 0}
-                    </div>
+      <div className="grid grid--progress">
+        <div className="stack">
+          <div className={`card card--hero ${running ? "" : "is-idle"}`}>
+            <div className="hero">
+              <Ring fraction={fraction} size={196} thickness={12} live={running}>
+                <div>
+                  <div className="ring-pct" style={{ fontSize: 46 }}>
+                    {Math.round(fraction * 100)}
+                    <small>%</small>
                   </div>
-                ))}
+                  <div className="ring-cap">
+                    <span className="num">{done}</span> of <span className="num">{total || "?"}</span> groups
+                  </div>
+                </div>
+              </Ring>
+              <Pill tone={status.tone} large live={running} dot={!running}>
+                {status.label}
+              </Pill>
+              <div>
+                <div className="now-name">{job.current_name || (running ? "Getting ready" : "—")}</div>
+                {job.current_detail && <div className="now-detail">{job.current_detail}</div>}
               </div>
-            )}
-          </GlassHero>
-
-          <GlassCard>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-              <div style={{ fontSize: 13, fontWeight: 800 }}>Live feed</div>
-              <span className="status-pill mono" style={{ background: "var(--cyan-soft)", color: "var(--cyan)" }}>
-                {job.delay_seconds}s delay
-              </span>
+              {job.error && <Alert tone="bad">{job.error}</Alert>}
             </div>
-            {rows.length === 0 ? (
-              <div style={{ color: "var(--text3)", fontSize: 13, textAlign: "center", padding: "16px 0" }}>No results yet.</div>
-            ) : (
-              <div style={{ maxHeight: 480, overflowY: "auto" }}>
-                <table className="queue-table">
-                  <thead>
-                    <tr>
-                      <th>Target</th>
-                      <th>Status</th>
-                      <th style={{ textAlign: "right" }}>Detail</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((r) => (
-                      <tr key={r.id}>
-                        <td style={{ display: "flex", alignItems: "center", gap: 9 }}>
-                          <AvatarBadge seed={r.target_name} size={24} fontSize={9.5} />
-                          {r.target_name}
-                        </td>
-                        <td>
-                          <StatusPill label={r.status} tone={toneForStatus(r.status)} />
-                        </td>
-                        <td className="mono" style={{ textAlign: "right", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 220 }}>
-                          {r.detail}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </GlassCard>
+          </div>
+
+          <EtaCard job={job} eta={eta} elapsed={elapsed} />
+
+          {hasSummary && (
+            <div className="counters">
+              {COUNTERS.map((c) => (
+                <div className="counter" key={c.key}>
+                  <b style={{ color: (summary[c.key] ?? 0) > 0 ? c.color : "var(--text-3)" }}>{summary[c.key] ?? 0}</b>
+                  <span>{c.label}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
+
+        <Card flush>
+          <CardHead
+            pad
+            title="Live feed"
+            sub={running ? "Newest first, as each group is reached" : "The most recent results of this broadcast"}
+            end={
+              <Pill mono>
+                {job.delay_seconds}s delay
+              </Pill>
+            }
+          />
+          {results.isLoading ? (
+            <SkeletonRows count={6} />
+          ) : rows.length === 0 ? (
+            <Empty icon="list" title="No results yet">
+              {running ? "The first group will appear here in a moment." : "This broadcast did not reach any group."}
+            </Empty>
+          ) : (
+            <div className="rows feed">
+              {rows.map((r) => (
+                <div className={`row ${fresh.has(r.id) ? "row--new" : ""}`} key={r.id}>
+                  <Avatar name={r.target_name} size={34} />
+                  <div className="row-main">
+                    <div className="row-title">{r.target_name}</div>
+                    <div className="row-sub">{r.detail || r.platform}</div>
+                  </div>
+                  <div className="row-end">
+                    <span className="row-time only-desktop">{fmtClock(parseServerTime(r.created_at))}</span>
+                    <ResultPill status={r.status} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
       </div>
-    </>
+    </div>
   );
 }
