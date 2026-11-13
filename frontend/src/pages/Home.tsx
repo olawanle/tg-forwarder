@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Icon } from "../components/Icon";
 import { Avatar, Card, CardHead, Empty, PageHead, Pill, ResultPill, Ring, Skeleton, SkeletonRows, jobStatus } from "../components/ui";
 import { TrendChart, buildDailySeries, useTrend } from "../components/TrendChart";
+import { BroadcastAllButton } from "../components/BroadcastAll";
 import { useAuth } from "../auth/AuthContext";
 import { useProfiles } from "../profile/ProfileContext";
 import { api } from "../api/client";
@@ -150,12 +151,18 @@ export function Home() {
           </>
         }
         actions={
-          <Link to="/compose" className="btn btn--primary only-desktop">
-            <Icon name="send" size={17} />
-            New broadcast
-          </Link>
+          <>
+            <BroadcastAllButton className="only-desktop" />
+            <Link to="/compose" className="btn btn--primary only-desktop">
+              <Icon name="send" size={17} />
+              New broadcast
+            </Link>
+          </>
         }
       />
+      <div className="only-mobile">
+        <BroadcastAllButton block />
+      </div>
 
       <div className="grid grid--main">
         <LiveCard job={job} running={running} eta={eta} />

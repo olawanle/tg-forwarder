@@ -3,14 +3,43 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from forwarder.job_runner import get_job_runner
-from forwarder.storage import ProfileRow, Storage
+from forwarder.storage import ProfileRow, Storage, UserRow
 
 from backend import schemas
 from backend.converters import job_out
-from backend.deps import get_owned_profile, get_store
+from backend.broadcast_all import plan_account, start_plan
+from backend.deps import get_current_user, get_owned_profile, get_store
 from backend.tg import build_telegram_service, ensure_profile_not_broadcasting
 
 router = APIRouter(prefix="/profiles/{profile_id}", tags=["compose"])
+account_router = APIRouter(prefix="/broadcast/all", tags=["compose"])
+
+
+@account_router.get("/plan")
+def broadcast_all_plan(user: UserRow = Depends(get_current_user), store: Storage = Depends(get_store)):
+    """What "broadcast all profiles" would do, profile by profile."""
+    return [p.public() for p in plan_account(user, store)]
+
+
+@account_router.post("/start")
+def broadcast_all_start(user: UserRow = Depends(get_current_user), store: Storage = Depends(get_store)):
+    """Start every ready profile with its own previous settings. Profiles
+    that can't start are reported, not treated as a failure of the rest."""
+    profiles = {p.id: p for p in store.list_profiles_for_user(user.id)}
+    out = []
+    for plan in plan_account(user, store):
+        entry = plan.public()
+        if plan.ready:
+            try:
+                entry["job_id"] = start_plan(plan, profiles[plan.profile_id], store)
+                entry["started"] = True
+            except RuntimeError as exc:
+                entry["started"] = False
+                entry["reason"] = str(exc)
+        else:
+            entry["started"] = False
+        out.append(entry)
+    return out
 
 
 @router.get("/saved-messages", response_model=list[schemas.SavedMessageOut])
