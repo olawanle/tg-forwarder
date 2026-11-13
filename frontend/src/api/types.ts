@@ -84,6 +84,13 @@ export interface Job {
   summary: Record<string, number>;
   created_at: string;
   updated_at: string;
+  /** Seconds the job has been running, or ran for once it is over. */
+  elapsed_seconds?: number | null;
+  /** Live estimate -- only present while the job is sending. */
+  eta_seconds?: number | null;
+  eta_pace_seconds?: number | null;
+  eta_measured?: boolean | null;
+  eta_holding?: boolean | null;
 }
 
 export interface JobResult {

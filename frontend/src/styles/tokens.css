@@ -1,0 +1,99 @@
+/* Design tokens. One dark theme; the accent is swappable (see
+   src/theme/accent.ts) so the brand colour can change without touching a
+   component. Everything else in the app reads these, never a raw value. */
+
+:root {
+  color-scheme: dark;
+
+  /* Surfaces, darkest to lightest. Content sits on solid surfaces so it
+     stays legible; only floating chrome (tab bar, sheets) is translucent. */
+  --bg: #060709;
+  --surface-1: #0d0f12;
+  --surface-2: #13161a;
+  --surface-3: #1a1e23;
+  --inset: #090b0d;
+  --line: rgba(255, 255, 255, 0.07);
+  --line-strong: rgba(255, 255, 255, 0.13);
+  --glass: rgba(13, 15, 18, 0.72);
+
+  --text: #f3f5f7;
+  --text-2: #a9b0ba;
+  --text-3: #6f7782;
+  --text-4: #464c55;
+
+  /* Status colours are fixed: they mean the same thing under any accent. */
+  --ok: #3ddc97;
+  --ok-soft: rgba(61, 220, 151, 0.13);
+  --warn: #f2b84b;
+  --warn-soft: rgba(242, 184, 75, 0.13);
+  --bad: #ff6b6b;
+  --bad-soft: rgba(255, 107, 107, 0.13);
+  --info: #6ea8ff;
+  --info-soft: rgba(110, 168, 255, 0.13);
+
+  --font-sans: "Geist Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --r-xs: 8px;
+  --r-sm: 10px;
+  --r-md: 14px;
+  --r-lg: 18px;
+  --r-xl: 24px;
+  --r-full: 999px;
+
+  --shadow-1: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-2: 0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 12px 32px -12px rgba(0, 0, 0, 0.7);
+  --shadow-pop: 0 1px 0 rgba(255, 255, 255, 0.06) inset, 0 24px 60px -16px rgba(0, 0, 0, 0.85);
+
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
+  --t-fast: 140ms;
+  --t-med: 220ms;
+  --t-slow: 380ms;
+
+  --sidebar-w: 264px;
+  --tabbar-h: 64px;
+  --topbar-h: 56px;
+}
+
+/* Accents. --accent-ink is the text colour that sits on a solid accent. */
+:root,
+:root[data-accent="emerald"] {
+  --accent: #2fe0a0;
+  --accent-2: #9df5d0;
+  --accent-ink: #03170f;
+  --accent-rgb: 47, 224, 160;
+}
+:root[data-accent="blue"] {
+  --accent: #5b9dff;
+  --accent-2: #a8ccff;
+  --accent-ink: #041226;
+  --accent-rgb: 91, 157, 255;
+}
+:root[data-accent="violet"] {
+  --accent: #9d8cff;
+  --accent-2: #cfc6ff;
+  --accent-ink: #0e0a26;
+  --accent-rgb: 157, 140, 255;
+}
+:root[data-accent="amber"] {
+  --accent: #ffb547;
+  --accent-2: #ffd99b;
+  --accent-ink: #1f1300;
+  --accent-rgb: 255, 181, 71;
+}
+:root {
+  --accent-soft: rgba(var(--accent-rgb), 0.12);
+  --accent-softer: rgba(var(--accent-rgb), 0.06);
+  --accent-line: rgba(var(--accent-rgb), 0.32);
+  --accent-glow: rgba(var(--accent-rgb), 0.28);
+  --focus: 0 0 0 3px rgba(var(--accent-rgb), 0.28);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --t-fast: 0ms;
+    --t-med: 0ms;
+    --t-slow: 0ms;
+  }
+}
