@@ -13,6 +13,7 @@ import { Targets } from "./pages/Targets";
 import { Compose } from "./pages/Compose";
 import { Progress } from "./pages/Progress";
 import { Log } from "./pages/Log";
+import { QrShare } from "./pages/QrShare";
 
 function RequirePasswordChange({ children }: { children: ReactNode }) {
   const { user } = useAuth();
@@ -26,6 +27,7 @@ export default function App() {
       <ProfileProvider>
         <Routes>
           <Route path="/login" element={<Login />} />
+          <Route path="/qr/:key" element={<QrShare />} />
           <Route
             path="/set-password"
             element={

@@ -132,6 +132,13 @@ class QrStatusOut(BaseModel):
     qr_url: str | None = None
     profile_id: int | None = None
     error: str | None = None
+    share_key: str | None = None
+
+
+class QrSharedOut(BaseModel):
+    status: str  # waiting | done | closed
+    qr_image: str | None = None
+    expires_in: int | None = None
 
 
 class PhoneVerifyCodeRequest(BaseModel):

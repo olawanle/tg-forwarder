@@ -81,7 +81,24 @@ class QrLoginTest(unittest.TestCase):
     def test_public_view_hides_the_code_once_not_waiting(self) -> None:
         s = state()
         s.update(status="done", qr_url="tg://x", qr_image="data:", profile_id=9)
-        self.assertEqual(qr_login.public(s), {"status": "done", "qr_image": None, "qr_url": None, "profile_id": 9, "error": None})
+        self.assertEqual(qr_login.public(s), {"status": "done", "qr_image": None, "qr_url": None, "profile_id": 9, "error": None, "share_key": None})
+
+    def test_share_link_shows_only_the_qr_and_dies_with_the_attempt(self) -> None:
+        s = state()
+        s.update(qr_image="data:img", qr_url="tg://x", qr_expires=time.time() + 20, share_key="k1", session="SECRET")
+        qr_login.QR_STORE["tok"] = s
+        qr_login.SHARED["k1"] = "tok"
+        try:
+            out = qr_login.shared("k1")
+            self.assertEqual(set(out), {"status", "qr_image", "expires_in"})
+            self.assertEqual((out["status"], out["qr_image"]), ("waiting", "data:img"))
+            self.assertIsNone(qr_login.shared("nope"))
+            s["status"] = "password"  # account details must not leak once it moves on
+            self.assertEqual(qr_login.shared("k1"), {"status": "closed", "qr_image": None, "expires_in": None})
+        finally:
+            qr_login.stop("tok")
+        self.assertIsNone(qr_login.shared("k1"))
+        self.assertNotIn("k1", qr_login.SHARED)
 
 
 if __name__ == "__main__":

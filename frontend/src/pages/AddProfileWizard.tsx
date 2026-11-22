@@ -75,6 +75,27 @@ export function AddProfileWizard({ onClose, onDone, reconnectProfile }: Props) {
 
   // ---- QR login: no code needed, the Telegram app approves it directly.
   const [qr, setQr] = useState<{ image: string | null; url: string | null; status: string } | null>(null);
+  const [shareKey, setShareKey] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const shareLink = shareKey ? `${window.location.origin}/qr/${shareKey}` : "";
+  async function shareQr() {
+    if (!shareLink) return;
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: "Telegram login QR", text: "Open this, then scan it from Telegram → Settings → Devices", url: shareLink });
+        return;
+      } catch {
+        // cancelled or unavailable: fall back to copying
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(shareLink);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2500);
+    } catch {
+      window.prompt("Copy this link", shareLink);
+    }
+  }
   async function startQr() {
     setError("");
     if (!label.trim()) {
@@ -83,12 +104,13 @@ export function AddProfileWizard({ onClose, onDone, reconnectProfile }: Props) {
     }
     setBusy(true);
     try {
-      const res = await api.post<{ wizard_token: string; status: string; qr_image: string | null; qr_url: string | null }>("/profiles/qr/start", {
+      const res = await api.post<{ wizard_token: string; status: string; qr_image: string | null; qr_url: string | null; share_key: string | null }>("/profiles/qr/start", {
         label: label.trim(),
         profile_id: reconnectProfile?.id,
       });
       setWizardToken(res.wizard_token);
       setQr({ image: res.qr_image, url: res.qr_url, status: res.status });
+      setShareKey(res.share_key);
       setStep("qr");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not start QR login.");
@@ -128,6 +150,7 @@ export function AddProfileWizard({ onClose, onDone, reconnectProfile }: Props) {
   function leaveQr(next: Step) {
     if (wizardToken && qr?.status === "waiting") api.post("/profiles/qr/cancel", { wizard_token: wizardToken }).catch(() => {});
     setQr(null);
+    setShareKey(null);
     go(next);
   }
 
@@ -343,11 +366,20 @@ export function AddProfileWizard({ onClose, onDone, reconnectProfile }: Props) {
               </span>
             </div>
           ) : null}
-          {qr.status === "waiting" && (
-            <Alert>
-              The code has to be scanned by the phone's camera; Telegram blocks opening it on the same phone. If this page is open on
-              that phone, open it on a computer or another phone instead, log in there, and scan from this phone.
-            </Alert>
+          {qr.status === "waiting" && shareLink && (
+            <div className="stack stack--sm">
+              <div style={{ fontWeight: 600 }}>On the same phone as Telegram?</div>
+              <div className="hint">
+                Telegram only accepts this code through the phone's camera. Send this link to any other screen (a computer, tablet or
+                another phone; no login needed there), open it, and scan from this phone. It stays live for 10 minutes.
+              </div>
+              <div className="qr-link">
+                <code>{shareLink}</code>
+                <Button size="sm" icon="link" onClick={shareQr}>
+                  {copied ? "Copied" : "Share link"}
+                </Button>
+              </div>
+            </div>
           )}
           {error && <Alert tone="bad">{error}</Alert>}
           {qr.status !== "waiting" && (
