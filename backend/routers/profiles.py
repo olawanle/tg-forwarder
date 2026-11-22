@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import secrets
 import time
 
@@ -8,6 +9,7 @@ from fastapi.concurrency import run_in_threadpool
 
 from forwarder.config import get_settings
 from forwarder.storage import ProfileRow, Storage, UserRow
+from forwarder import telegram_login
 from forwarder.telegram_service import TelegramService
 
 from backend import schemas
@@ -16,6 +18,7 @@ from backend.deps import get_current_user, get_owned_profile, get_store
 from backend.wizard import WIZARD_STORE, sweep_expired
 
 router = APIRouter(prefix="/profiles", tags=["profiles"])
+log = logging.getLogger("forwarder.login")
 
 
 @router.get("", response_model=list[schemas.ProfileOut])
@@ -73,6 +76,37 @@ def replace_session(
 
 # ---------------------------------------------------------- phone login wizard
 
+def _wizard(token: str, user: UserRow) -> dict:
+    state = WIZARD_STORE.get(token)
+    if not state or state["user_id"] != user.id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "This login attempt expired. Start over.")
+    return state
+
+
+def _telegram(session: str) -> TelegramService:
+    settings = get_settings()
+    return TelegramService(settings.telegram_api_id, settings.telegram_api_hash, session)
+
+
+async def _run_step(state: dict, step, *args):
+    """Run a login step on the wizard's session and keep the session it
+    leaves behind. Errors become a message the user can act on."""
+    tg = _telegram(state["session"])
+    try:
+        result = await tg.login_step(step, *args)
+    except Exception as exc:
+        log.info("login step %s failed: %s", step.__name__, type(exc).__name__)
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, telegram_login.friendly(exc))
+    state["session"] = tg.session
+    return result
+
+
+def _remember(state: dict, phone_code_hash: str, delivery: telegram_login.Delivery) -> schemas.CodeDeliveryOut:
+    state["phone_code_hash"] = phone_code_hash
+    state["delivery"] = delivery.kind
+    return schemas.CodeDeliveryOut(**delivery.public())
+
+
 @router.post("/phone/send-code", response_model=schemas.PhoneSendCodeResponse)
 async def phone_send_code(
     body: schemas.PhoneSendCodeRequest,
@@ -95,22 +129,54 @@ async def phone_send_code(
         if not existing or existing.user_id != user.id:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Profile not found")
         reconnect_profile_id = body.profile_id
-    tmp = TelegramService(settings.telegram_api_id, settings.telegram_api_hash, "")
-    try:
-        phone_code_hash, session = await tmp.request_code(body.phone.strip())
-    except Exception as exc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)[:300])
-    token = secrets.token_urlsafe(24)
-    WIZARD_STORE[token] = {
+    phone = body.phone.strip()
+    state = {
         "user_id": user.id,
         "label": body.label.strip(),
-        "phone": body.phone.strip(),
-        "session": session,
-        "phone_code_hash": phone_code_hash,
+        "phone": phone,
+        "session": "",
         "created": time.time(),
         "reconnect_profile_id": reconnect_profile_id,
     }
-    return schemas.PhoneSendCodeResponse(wizard_token=token)
+    phone_code_hash, delivery = await _run_step(state, telegram_login.send_code, phone)
+    token = secrets.token_urlsafe(24)
+    out = _remember(state, phone_code_hash, delivery)
+    WIZARD_STORE[token] = state
+    return schemas.PhoneSendCodeResponse(wizard_token=token, delivery=out)
+
+
+@router.post("/phone/resend-code", response_model=schemas.PhoneDeliveryResponse)
+async def phone_resend_code(body: schemas.PhoneWizardRequest, user: UserRow = Depends(get_current_user)):
+    """Send the code again, by the next method Telegram offers (SMS, call…)."""
+    state = _wizard(body.wizard_token, user)
+    phone_code_hash, delivery = await _run_step(
+        state, telegram_login.resend_code, state["phone"], state["phone_code_hash"]
+    )
+    return schemas.PhoneDeliveryResponse(delivery=_remember(state, phone_code_hash, delivery))
+
+
+@router.post("/phone/setup-email", response_model=schemas.PhoneDeliveryResponse)
+async def phone_setup_email(body: schemas.PhoneSetupEmailRequest, user: UserRow = Depends(get_current_user)):
+    """Telegram wants a login email on the account before it sends a code:
+    mail a confirmation code to it."""
+    state = _wizard(body.wizard_token, user)
+    email = body.email.strip()
+    if "@" not in email:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Enter a valid email address.")
+    delivery = await _run_step(
+        state, telegram_login.setup_email, state["phone"], state["phone_code_hash"], email
+    )
+    return schemas.PhoneDeliveryResponse(delivery=schemas.CodeDeliveryOut(**delivery.public()))
+
+
+@router.post("/phone/verify-email", response_model=schemas.PhoneDeliveryResponse)
+async def phone_verify_email(body: schemas.PhoneVerifyCodeRequest, user: UserRow = Depends(get_current_user)):
+    """Confirm the login email; Telegram then sends the login code."""
+    state = _wizard(body.wizard_token, user)
+    phone_code_hash, delivery = await _run_step(
+        state, telegram_login.confirm_email, state["phone"], state["phone_code_hash"], body.code.replace(" ", "").strip()
+    )
+    return schemas.PhoneDeliveryResponse(delivery=_remember(state, phone_code_hash, delivery))
 
 
 @router.post("/phone/verify-code", response_model=schemas.PhoneVerifyCodeResponse)
@@ -119,20 +185,18 @@ async def phone_verify_code(
     user: UserRow = Depends(get_current_user),
     store: Storage = Depends(get_store),
 ):
-    settings = get_settings()
-    state = WIZARD_STORE.get(body.wizard_token)
-    if not state or state["user_id"] != user.id:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Wizard session expired — start over.")
-    tmp = TelegramService(settings.telegram_api_id, settings.telegram_api_hash, state["session"])
-    try:
-        needs_password, session = await tmp.submit_code(
-            state["phone"], body.code.replace(" ", "").strip(), state["phone_code_hash"]
-        )
-    except Exception as exc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Invalid or expired code: {exc}"[:300])
-    state["session"] = session
+    state = _wizard(body.wizard_token, user)
+    needs_password = await _run_step(
+        state,
+        telegram_login.sign_in,
+        state["phone"],
+        state["phone_code_hash"],
+        body.code.replace(" ", "").strip(),
+        state.get("delivery") == "email",
+    )
     if needs_password:
         return schemas.PhoneVerifyCodeResponse(needs_password=True)
+    session = state["session"]
     reconnect_id = state.get("reconnect_profile_id")
     if reconnect_id is not None:
         await run_in_threadpool(store.update_profile_session, reconnect_id, session)
@@ -160,7 +224,7 @@ async def phone_verify_password(
     try:
         session = await tmp.submit_password(body.password)
     except Exception as exc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Incorrect password: {exc}"[:300])
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, telegram_login.friendly(exc))
     reconnect_id = state.get("reconnect_profile_id")
     if reconnect_id is not None:
         await run_in_threadpool(store.update_profile_session, reconnect_id, session)

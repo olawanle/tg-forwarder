@@ -1,10 +1,45 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Alert, Button, Field, Input, Sheet } from "../components/ui";
 import { api, ApiError } from "../api/client";
+import type { CodeDelivery } from "../api/types";
+import { useNow } from "../lib/jobs";
 
-type Step = "phone" | "code" | "password" | "paste";
+type Step = "phone" | "email" | "email-code" | "code" | "password" | "paste";
 const ORDER: Step[] = ["phone", "code", "password"];
+
+const METHOD: Record<string, string> = {
+  sms: "by SMS",
+  call: "by phone call",
+  flash_call: "by a flash call",
+  missed_call: "by a missed call",
+  fragment_sms: "by SMS through Fragment",
+};
+
+/** Plain-language "where to look", from what Telegram actually said. */
+function whereItWent(d: CodeDelivery, phone: string): string {
+  switch (d.kind) {
+    case "app":
+      return `Telegram sent it inside the Telegram app on a device already logged in to ${phone}, as a message from "Telegram" (blue tick). It does not come by SMS.`;
+    case "sms":
+    case "sms_word":
+    case "sms_phrase":
+      return `Telegram sent it by SMS to ${phone}.`;
+    case "call":
+      return `Telegram is calling ${phone} and will read the code out.`;
+    case "flash_call":
+    case "missed_call":
+      return `Telegram will give ${phone} a missed call. The code is the last ${d.length ?? 4} digits of the number that calls${d.hint ? ` (it starts ${d.hint})` : ""}.`;
+    case "email":
+      return `Telegram sent it to the account's login email${d.hint ? `, ${d.hint}` : ""}. Check spam too.`;
+    case "fragment_sms":
+      return `This is an anonymous Fragment number, so the code is on Fragment${d.hint ? ` (${d.hint})` : ""}.`;
+    case "firebase_sms":
+      return "Telegram wants to send this code through a channel only its own apps can receive. Use “send it another way” below.";
+    default:
+      return `Telegram sent it (${d.kind}). Check the Telegram app first, then SMS.`;
+  }
+}
 
 interface Props {
   onClose: () => void;
@@ -23,6 +58,20 @@ export function AddProfileWizard({ onClose, onDone, reconnectProfile }: Props) {
   const [sessionString, setSessionString] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [delivery, setDelivery] = useState<CodeDelivery | null>(null);
+  const [deliveredAt, setDeliveredAt] = useState(0);
+  const [email, setEmail] = useState("");
+  const [emailCode, setEmailCode] = useState("");
+  const [emailHint, setEmailHint] = useState("");
+  const now = useNow(1000, step === "code" && !!delivery?.next_kind);
+
+  function arrived(d: CodeDelivery) {
+    setDelivery(d);
+    setDeliveredAt(Date.now());
+    setCode("");
+    setStep(d.kind === "email_setup_required" ? "email" : "code");
+  }
+  useEffect(() => setError(""), [step]);
 
   function finish(profileId: number) {
     qc.invalidateQueries({ queryKey: ["profiles"] });
@@ -37,18 +86,50 @@ export function AddProfileWizard({ onClose, onDone, reconnectProfile }: Props) {
     }
     setBusy(true);
     try {
-      const res = await api.post<{ wizard_token: string }>("/profiles/phone/send-code", {
+      const res = await api.post<{ wizard_token: string; delivery: CodeDelivery | null }>("/profiles/phone/send-code", {
         label: label.trim(),
         phone: phone.trim(),
         profile_id: reconnectProfile?.id,
       });
       setWizardToken(res.wizard_token);
-      setStep("code");
+      arrived(res.delivery ?? { kind: "app", length: null, hint: null, next_kind: null, timeout: null });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not send a code.");
     } finally {
       setBusy(false);
     }
+  }
+
+  async function wizardCall<T>(path: string, body: object, fallback: string): Promise<T | null> {
+    setError("");
+    setBusy(true);
+    try {
+      return await api.post<T>(path, { wizard_token: wizardToken, ...body });
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : fallback);
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function resend() {
+    const res = await wizardCall<{ delivery: CodeDelivery }>("/profiles/phone/resend-code", {}, "Could not resend the code.");
+    if (res) arrived(res.delivery);
+  }
+
+  async function sendEmailCode() {
+    const res = await wizardCall<{ delivery: CodeDelivery }>("/profiles/phone/setup-email", { email: email.trim() }, "Could not send the email.");
+    if (res) {
+      setEmailHint(res.delivery.hint ?? email.trim());
+      setEmailCode("");
+      setStep("email-code");
+    }
+  }
+
+  async function confirmEmail() {
+    const res = await wizardCall<{ delivery: CodeDelivery }>("/profiles/phone/verify-email", { code: emailCode.replace(/\s/g, "") }, "Could not confirm the email.");
+    if (res) arrived(res.delivery);
   }
 
   async function verifyCode() {
@@ -115,7 +196,7 @@ export function AddProfileWizard({ onClose, onDone, reconnectProfile }: Props) {
       {step !== "paste" && (
         <div className="steps">
           {ORDER.map((s, i) => (
-            <i key={s} className={ORDER.indexOf(step) >= i ? "on" : ""} />
+            <i key={s} className={ORDER.indexOf(step.startsWith("email") ? "code" : step) >= i ? "on" : ""} />
           ))}
         </div>
       )}
@@ -146,21 +227,71 @@ export function AddProfileWizard({ onClose, onDone, reconnectProfile }: Props) {
         </>
       )}
 
-      {step === "code" && (
+      {step === "code" && delivery && (
         <>
           <div>
             <div className="sheet-title">Enter the code</div>
-            <div className="sheet-sub">Sent to {phone}. It arrives inside Telegram, not by SMS.</div>
+            <div className="sheet-sub">{whereItWent(delivery, phone)}</div>
           </div>
-          <Field label="Login code">
+          <Field label={delivery.length ? `${delivery.length}-digit login code` : "Login code"}>
             <Input className="input--code" value={code} onChange={(e) => setCode(e.target.value)} autoFocus inputMode="numeric" autoComplete="one-time-code" />
           </Field>
           {error && <Alert tone="bad">{error}</Alert>}
           <Button variant="primary" size="lg" block onClick={verifyCode} loading={busy} disabled={!code.trim()}>
             {busy ? "Verifying…" : "Verify code"}
           </Button>
+          {delivery.next_kind && (() => {
+            const wait = Math.max(0, Math.ceil(((delivery.timeout ?? 0) * 1000 - (now - deliveredAt)) / 1000));
+            return (
+              <Button block onClick={resend} disabled={busy || wait > 0}>
+                {wait > 0 ? `Didn't get it? Send ${METHOD[delivery.next_kind] ?? "another way"} in ${wait}s` : `Didn't get it? Send it ${METHOD[delivery.next_kind] ?? "another way"}`}
+              </Button>
+            );
+          })()}
+          <p className="hint">Don't share or forward the code in any chat: Telegram cancels codes that get sent on.</p>
           <button type="button" className="link" style={{ alignSelf: "center", color: "var(--text-3)" }} onClick={() => go("phone")}>
             Start over
+          </button>
+        </>
+      )}
+
+      {step === "email" && (
+        <>
+          <div>
+            <div className="sheet-title">Add a login email</div>
+            <div className="sheet-sub">
+              Telegram needs a login email on this account before it will send a code. Enter one you can open now; Telegram emails it a
+              confirmation code.
+            </div>
+          </div>
+          <Field label="Email">
+            <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" autoFocus autoComplete="email" />
+          </Field>
+          {error && <Alert tone="bad">{error}</Alert>}
+          <Button variant="primary" size="lg" block onClick={sendEmailCode} loading={busy} disabled={!email.includes("@")}>
+            {busy ? "Sending…" : "Email me a code"}
+          </Button>
+          <button type="button" className="link" style={{ alignSelf: "center", color: "var(--text-3)" }} onClick={() => go("phone")}>
+            Start over
+          </button>
+        </>
+      )}
+
+      {step === "email-code" && (
+        <>
+          <div>
+            <div className="sheet-title">Check your email</div>
+            <div className="sheet-sub">Telegram sent a confirmation code to {emailHint}. Check spam too.</div>
+          </div>
+          <Field label="Email code">
+            <Input className="input--code" value={emailCode} onChange={(e) => setEmailCode(e.target.value)} autoFocus inputMode="numeric" autoComplete="one-time-code" />
+          </Field>
+          {error && <Alert tone="bad">{error}</Alert>}
+          <Button variant="primary" size="lg" block onClick={confirmEmail} loading={busy} disabled={!emailCode.trim()}>
+            {busy ? "Confirming…" : "Confirm email"}
+          </Button>
+          <button type="button" className="link" style={{ alignSelf: "center", color: "var(--text-3)" }} onClick={() => go("email")}>
+            Use a different email
           </button>
         </>
       )}

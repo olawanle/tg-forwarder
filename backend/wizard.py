@@ -16,7 +16,8 @@ from __future__ import annotations
 import time
 
 WIZARD_STORE: dict[str, dict] = {}
-_TTL_SECONDS = 600
+# Long enough for an email round trip plus a slow SMS.
+_TTL_SECONDS = 1200
 
 
 def sweep_expired() -> None:

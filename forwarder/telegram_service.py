@@ -225,6 +225,19 @@ class TelegramService:
         finally:
             await client.disconnect()
 
+    async def login_step(self, step, *args):
+        """Run one forwarder.telegram_login step on this (not yet
+        authorized) session and keep the session it leaves behind -- the
+        next step must reuse it, since Telegram ties the code to it."""
+        client = self._client()
+        try:
+            await asyncio.wait_for(client.connect(), timeout=30)
+            result = await asyncio.wait_for(step(client, *args), timeout=60)
+            self.session = client.session.save()
+            return result
+        finally:
+            await client.disconnect()
+
     async def request_code(self, phone: str) -> tuple[str, str]:
         """Returns (phone_code_hash, updated_session_string)."""
         client = self._client()

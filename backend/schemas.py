@@ -94,8 +94,30 @@ class PhoneSendCodeRequest(BaseModel):
     profile_id: int | None = None  # set to reconnect an existing profile in place
 
 
+class CodeDeliveryOut(BaseModel):
+    kind: str
+    length: int | None = None
+    hint: str | None = None
+    next_kind: str | None = None
+    timeout: int | None = None
+
+
 class PhoneSendCodeResponse(BaseModel):
     wizard_token: str
+    delivery: CodeDeliveryOut | None = None
+
+
+class PhoneWizardRequest(BaseModel):
+    wizard_token: str
+
+
+class PhoneSetupEmailRequest(BaseModel):
+    wizard_token: str
+    email: str
+
+
+class PhoneDeliveryResponse(BaseModel):
+    delivery: CodeDeliveryOut
 
 
 class PhoneVerifyCodeRequest(BaseModel):

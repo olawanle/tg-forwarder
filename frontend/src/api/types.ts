@@ -199,3 +199,12 @@ export interface ProfilePlan {
   started?: boolean;
   job_id?: number;
 }
+
+/** Where Telegram says it sent a login code. */
+export interface CodeDelivery {
+  kind: string;
+  length: number | null;
+  hint: string | null;
+  next_kind: string | null;
+  timeout: number | null;
+}
