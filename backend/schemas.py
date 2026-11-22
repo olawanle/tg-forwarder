@@ -120,6 +120,20 @@ class PhoneDeliveryResponse(BaseModel):
     delivery: CodeDeliveryOut
 
 
+class QrStartRequest(BaseModel):
+    label: str
+    profile_id: int | None = None
+
+
+class QrStatusOut(BaseModel):
+    status: str  # waiting | done | password | expired | error
+    wizard_token: str | None = None
+    qr_image: str | None = None
+    qr_url: str | None = None
+    profile_id: int | None = None
+    error: str | None = None
+
+
 class PhoneVerifyCodeRequest(BaseModel):
     wizard_token: str
     code: str
