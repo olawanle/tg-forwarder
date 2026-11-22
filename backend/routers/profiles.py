@@ -188,6 +188,16 @@ def qr_status(body: schemas.PhoneWizardRequest, user: UserRow = Depends(get_curr
     return schemas.QrStatusOut(wizard_token=body.wizard_token, **out)
 
 
+@router.get("/qr/shared/{share_key}", response_model=schemas.QrSharedOut)
+def qr_shared(share_key: str):
+    """The QR on its own, for a link opened on another screen without logging
+    in there. The key is random and dies with the attempt (10 minutes)."""
+    out = qr_login.shared(share_key)
+    if out is None:
+        return schemas.QrSharedOut(status="closed")
+    return schemas.QrSharedOut(**out)
+
+
 @router.post("/qr/cancel")
 def qr_cancel(body: schemas.PhoneWizardRequest, user: UserRow = Depends(get_current_user)):
     state = qr_login.QR_STORE.get(body.wizard_token)

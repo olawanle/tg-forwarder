@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import secrets
 import time
 
 from fastapi.concurrency import run_in_threadpool
@@ -28,6 +29,9 @@ log = logging.getLogger("forwarder.login")
 
 LIFETIME = 600  # seconds a QR attempt may stay open, refreshing its code
 QR_STORE: dict[str, dict] = {}
+#: share key -> wizard token. The share key goes in a link the user opens on
+#: another screen (no login there), so it only ever reveals the QR itself.
+SHARED: dict[str, str] = {}
 
 
 def sweep() -> None:
@@ -39,6 +43,8 @@ def sweep() -> None:
 
 def stop(token: str) -> None:
     state = QR_STORE.pop(token, None)
+    if state:
+        SHARED.pop(state.get("share_key", ""), None)
     if state and state.get("task") and not state["task"].done():
         state["task"].cancel()
 
@@ -109,10 +115,12 @@ async def start(token: str, user_id: int, label: str, reconnect_profile_id: int 
         "reconnect_profile_id": reconnect_profile_id,
         "created": time.time(),
         "status": "waiting",
+        "share_key": secrets.token_urlsafe(18),
     }
     _publish(state, qr)
     state["task"] = asyncio.get_running_loop().create_task(_run(state, client, qr))
     QR_STORE[token] = state
+    SHARED[state["share_key"]] = token
     log.info("qr login: started")
     return state
 
@@ -124,4 +132,18 @@ def public(state: dict) -> dict:
         "qr_url": state.get("qr_url") if state["status"] == "waiting" else None,
         "profile_id": state.get("profile_id"),
         "error": state.get("error"),
+        "share_key": state.get("share_key") if state["status"] == "waiting" else None,
+    }
+
+
+def shared(share_key: str) -> dict | None:
+    """What the share link shows: the live QR and nothing about the account."""
+    state = QR_STORE.get(SHARED.get(share_key, ""))
+    if not state:
+        return None
+    waiting = state["status"] == "waiting"
+    return {
+        "status": state["status"] if state["status"] in ("waiting", "done") else "closed",
+        "qr_image": state.get("qr_image") if waiting else None,
+        "expires_in": max(0, round(state.get("qr_expires", 0) - time.time())) if waiting else None,
     }
