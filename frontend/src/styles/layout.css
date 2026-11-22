@@ -959,3 +959,11 @@ ul.auth-points {
   right: 0;
   transform: none;
 }
+
+/* Title stays readable when the page has several actions: they drop below it. */
+.page-head > .grow {
+  flex-basis: 260px;
+}
+.page-actions {
+  flex-wrap: wrap;
+}
