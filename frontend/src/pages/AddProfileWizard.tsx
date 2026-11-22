@@ -330,8 +330,8 @@ export function AddProfileWizard({ onClose, onDone, reconnectProfile }: Props) {
           <div>
             <div className="sheet-title">Scan with Telegram</div>
             <div className="sheet-sub">
-              On the phone where this account is logged in, open Telegram → <b>Settings</b> → <b>Devices</b> → <b>Link Desktop Device</b>, and
-              scan this code. It refreshes by itself.
+              On the phone where this account is logged in, open Telegram → <b>Settings</b> → <b>Devices</b> → <b>Scan QR</b> (or <b>Link Desktop
+              Device</b>), and point the camera at this code. It refreshes by itself.
             </div>
           </div>
           {qr.status === "waiting" && qr.image ? (
@@ -343,10 +343,11 @@ export function AddProfileWizard({ onClose, onDone, reconnectProfile }: Props) {
               </span>
             </div>
           ) : null}
-          {qr.status === "waiting" && qr.url && (
-            <a className="btn btn--block" href={qr.url}>
-              On this phone? Open in Telegram instead
-            </a>
+          {qr.status === "waiting" && (
+            <Alert>
+              The code has to be scanned by the phone's camera; Telegram blocks opening it on the same phone. If this page is open on
+              that phone, open it on a computer or another phone instead, log in there, and scan from this phone.
+            </Alert>
           )}
           {error && <Alert tone="bad">{error}</Alert>}
           {qr.status !== "waiting" && (
