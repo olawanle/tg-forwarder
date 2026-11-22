@@ -120,7 +120,7 @@ class FriendlyErrorTest(unittest.TestCase):
     def test_common_failures_read_as_instructions(self) -> None:
         self.assertIn("2 hours", login.friendly(errors.FloodWaitError(request=None, capture=7200)))
         self.assertIn("expired", login.friendly(errors.PhoneCodeExpiredError(request=None)))
-        self.assertIn("isn't right", login.friendly(errors.PhoneCodeInvalidError(request=None)))
+        self.assertIn("QR code", login.friendly(errors.PhoneCodeInvalidError(request=None)))
         self.assertIn("Too many code requests", login.friendly(errors.PhoneNumberFloodError(request=None)))
 
 

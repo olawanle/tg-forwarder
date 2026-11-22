@@ -118,7 +118,7 @@ def friendly(exc: BaseException) -> str:
         "PhoneNumberInvalidError": "That phone number isn't valid. Use the full number with country code, e.g. +234 803 555 0142.",
         "PhoneNumberBannedError": "Telegram has banned this phone number.",
         "PhoneNumberUnoccupiedError": "There's no Telegram account on this number yet. Create it in the Telegram app first.",
-        "PhoneCodeInvalidError": "That code isn't right. Check it and try again.",
+        "PhoneCodeInvalidError": "Telegram rejected that code. Only the newest code works, so an older code still sitting in your Telegram chat won't. If no new code came, stop retrying (Telegram locks you out after a few tries) and use \"Log in with a QR code\" instead.",
         "PhoneCodeExpiredError": "That code has expired, or was shared in a chat (Telegram cancels codes that get forwarded). Request a new one.",
         "PhoneCodeEmptyError": "Enter the code first.",
         "PasswordHashInvalidError": "That two-step verification password isn't right.",
