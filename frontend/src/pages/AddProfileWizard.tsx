@@ -5,7 +5,7 @@ import { api, ApiError } from "../api/client";
 import type { CodeDelivery } from "../api/types";
 import { useNow } from "../lib/jobs";
 
-type Step = "phone" | "email" | "email-code" | "code" | "password" | "paste";
+type Step = "phone" | "email" | "email-code" | "code" | "password" | "paste" | "qr";
 const ORDER: Step[] = ["phone", "code", "password"];
 
 const METHOD: Record<string, string> = {
@@ -72,6 +72,64 @@ export function AddProfileWizard({ onClose, onDone, reconnectProfile }: Props) {
     setStep(d.kind === "email_setup_required" ? "email" : "code");
   }
   useEffect(() => setError(""), [step]);
+
+  // ---- QR login: no code needed, the Telegram app approves it directly.
+  const [qr, setQr] = useState<{ image: string | null; url: string | null; status: string } | null>(null);
+  async function startQr() {
+    setError("");
+    if (!label.trim()) {
+      setError("Give the profile a name first.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await api.post<{ wizard_token: string; status: string; qr_image: string | null; qr_url: string | null }>("/profiles/qr/start", {
+        label: label.trim(),
+        profile_id: reconnectProfile?.id,
+      });
+      setWizardToken(res.wizard_token);
+      setQr({ image: res.qr_image, url: res.qr_url, status: res.status });
+      setStep("qr");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not start QR login.");
+    } finally {
+      setBusy(false);
+    }
+  }
+  useEffect(() => {
+    if (step !== "qr" || !wizardToken) return;
+    let stopped = false;
+    const id = window.setInterval(async () => {
+      try {
+        const res = await api.post<{ status: string; qr_image: string | null; qr_url: string | null; profile_id: number | null; error: string | null }>(
+          "/profiles/qr/status",
+          { wizard_token: wizardToken },
+        );
+        if (stopped) return;
+        if (res.status === "waiting") setQr({ image: res.qr_image, url: res.qr_url, status: res.status });
+        else if (res.status === "done" && res.profile_id) finish(res.profile_id);
+        else if (res.status === "password") setStep("password");
+        else {
+          setQr((q) => (q ? { ...q, status: res.status } : q));
+          setError(res.error || "The QR code expired before it was scanned. Try again.");
+        }
+        if (res.status !== "waiting") window.clearInterval(id);
+      } catch (err) {
+        if (!stopped) setError(err instanceof ApiError ? err.message : "Lost track of the QR login. Try again.");
+        window.clearInterval(id);
+      }
+    }, 2000);
+    return () => {
+      stopped = true;
+      window.clearInterval(id);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, wizardToken]);
+  function leaveQr(next: Step) {
+    if (wizardToken && qr?.status === "waiting") api.post("/profiles/qr/cancel", { wizard_token: wizardToken }).catch(() => {});
+    setQr(null);
+    go(next);
+  }
 
   function finish(profileId: number) {
     qc.invalidateQueries({ queryKey: ["profiles"] });
@@ -192,11 +250,16 @@ export function AddProfileWizard({ onClose, onDone, reconnectProfile }: Props) {
   }
 
   return (
-    <Sheet onClose={onClose}>
+    <Sheet
+      onClose={() => {
+        if (wizardToken && qr?.status === "waiting") api.post("/profiles/qr/cancel", { wizard_token: wizardToken }).catch(() => {});
+        onClose();
+      }}
+    >
       {step !== "paste" && (
         <div className="steps">
           {ORDER.map((s, i) => (
-            <i key={s} className={ORDER.indexOf(step.startsWith("email") ? "code" : step) >= i ? "on" : ""} />
+            <i key={s} className={ORDER.indexOf(step.startsWith("email") || step === "qr" ? "code" : step) >= i ? "on" : ""} />
           ))}
         </div>
       )}
@@ -221,6 +284,10 @@ export function AddProfileWizard({ onClose, onDone, reconnectProfile }: Props) {
           <Button variant="primary" size="lg" block onClick={sendCode} loading={busy}>
             {busy ? "Sending…" : "Send login code"}
           </Button>
+          <Button size="lg" block icon="link" onClick={startQr} disabled={busy}>
+            Log in with a QR code instead
+          </Button>
+          <p className="hint" style={{ textAlign: "center", marginTop: -6 }}>No code needed. Use this if the code never arrives.</p>
           <button type="button" className="link" style={{ alignSelf: "center", color: "var(--text-3)" }} onClick={() => go("paste")}>
             Advanced: paste an existing session string
           </button>
@@ -248,9 +315,47 @@ export function AddProfileWizard({ onClose, onDone, reconnectProfile }: Props) {
               </Button>
             );
           })()}
+          <Button block icon="link" onClick={startQr} disabled={busy}>
+            Code not coming? Log in with a QR code
+          </Button>
           <p className="hint">Don't share or forward the code in any chat: Telegram cancels codes that get sent on.</p>
           <button type="button" className="link" style={{ alignSelf: "center", color: "var(--text-3)" }} onClick={() => go("phone")}>
             Start over
+          </button>
+        </>
+      )}
+
+      {step === "qr" && qr && (
+        <>
+          <div>
+            <div className="sheet-title">Scan with Telegram</div>
+            <div className="sheet-sub">
+              On the phone where this account is logged in, open Telegram → <b>Settings</b> → <b>Devices</b> → <b>Link Desktop Device</b>, and
+              scan this code. It refreshes by itself.
+            </div>
+          </div>
+          {qr.status === "waiting" && qr.image ? (
+            <div className="stack stack--sm" style={{ alignItems: "center" }}>
+              <img className="qr" src={qr.image} alt="Telegram login QR code" />
+              <span className="hint">
+                <span className="dot dot--live" style={{ display: "inline-block", color: "var(--accent)", marginRight: 6 }} />
+                Waiting for the scan…
+              </span>
+            </div>
+          ) : null}
+          {qr.status === "waiting" && qr.url && (
+            <a className="btn btn--block" href={qr.url}>
+              On this phone? Open in Telegram instead
+            </a>
+          )}
+          {error && <Alert tone="bad">{error}</Alert>}
+          {qr.status !== "waiting" && (
+            <Button variant="primary" size="lg" block onClick={startQr} loading={busy}>
+              New QR code
+            </Button>
+          )}
+          <button type="button" className="link" style={{ alignSelf: "center", color: "var(--text-3)" }} onClick={() => leaveQr("phone")}>
+            Use a login code instead
           </button>
         </>
       )}

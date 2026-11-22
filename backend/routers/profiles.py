@@ -15,6 +15,7 @@ from forwarder.telegram_service import TelegramService
 from backend import schemas
 from backend.converters import profile_out
 from backend.deps import get_current_user, get_owned_profile, get_store
+from backend import qr_login
 from backend.wizard import WIZARD_STORE, sweep_expired
 
 router = APIRouter(prefix="/profiles", tags=["profiles"])
@@ -145,6 +146,56 @@ async def phone_send_code(
     return schemas.PhoneSendCodeResponse(wizard_token=token, delivery=out)
 
 
+@router.post("/qr/start", response_model=schemas.QrStatusOut)
+async def qr_start(body: schemas.QrStartRequest, user: UserRow = Depends(get_current_user)):
+    """Log in by scanning a QR code with the Telegram app instead of a code."""
+    sweep_expired()
+    qr_login.sweep()
+    if not body.label.strip():
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Give the profile a name first.")
+    if body.profile_id is not None:
+        store = Storage(get_settings().database_url)
+        existing = await run_in_threadpool(store.get_profile, body.profile_id)
+        if not existing or existing.user_id != user.id:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Profile not found")
+    token = secrets.token_urlsafe(24)
+    try:
+        state = await qr_login.start(token, user.id, body.label.strip(), body.profile_id)
+    except Exception as exc:
+        log.info("qr login start failed: %s", type(exc).__name__)
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, telegram_login.friendly(exc))
+    return schemas.QrStatusOut(wizard_token=token, **qr_login.public(state))
+
+
+@router.post("/qr/status", response_model=schemas.QrStatusOut)
+def qr_status(body: schemas.PhoneWizardRequest, user: UserRow = Depends(get_current_user)):
+    state = qr_login.QR_STORE.get(body.wizard_token)
+    if not state or state["user_id"] != user.id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "This login attempt expired. Start over.")
+    if state["status"] == "password" and body.wizard_token not in WIZARD_STORE:
+        # Continue in the normal wizard's two-step password step.
+        WIZARD_STORE[body.wizard_token] = {
+            "user_id": user.id,
+            "label": state["label"],
+            "phone": None,
+            "session": state["session"],
+            "created": time.time(),
+            "reconnect_profile_id": state.get("reconnect_profile_id"),
+        }
+    out = qr_login.public(state)
+    if state["status"] in ("done", "expired", "error"):
+        qr_login.stop(body.wizard_token)
+    return schemas.QrStatusOut(wizard_token=body.wizard_token, **out)
+
+
+@router.post("/qr/cancel")
+def qr_cancel(body: schemas.PhoneWizardRequest, user: UserRow = Depends(get_current_user)):
+    state = qr_login.QR_STORE.get(body.wizard_token)
+    if state and state["user_id"] == user.id:
+        qr_login.stop(body.wizard_token)
+    return {"ok": True}
+
+
 @router.post("/phone/resend-code", response_model=schemas.PhoneDeliveryResponse)
 async def phone_resend_code(body: schemas.PhoneWizardRequest, user: UserRow = Depends(get_current_user)):
     """Send the code again, by the next method Telegram offers (SMS, call…)."""
@@ -228,7 +279,8 @@ async def phone_verify_password(
     reconnect_id = state.get("reconnect_profile_id")
     if reconnect_id is not None:
         await run_in_threadpool(store.update_profile_session, reconnect_id, session)
-        await run_in_threadpool(store.update_profile_phone, reconnect_id, state["phone"])
+        if state.get("phone"):  # unknown after a QR login
+            await run_in_threadpool(store.update_profile_phone, reconnect_id, state["phone"])
         profile_id = reconnect_id
     else:
         profile_id = await run_in_threadpool(
